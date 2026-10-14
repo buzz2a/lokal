@@ -2,6 +2,15 @@
 // summary on its page (the rules themselves are applied by
 // electron/playlists/smart.js).
 
+// The Camelot wheel's 24 keys, "1A" to "12B", with their names ("8A (A minor)").
+const NOTES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B']
+const CAMELOT_MAJOR = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1] // by root, C first (electron/mixing/camelot.js)
+const CAMELOT_MINOR = [5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10]
+const KEY_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap(num => [
+  [`${num}A`, `${num}A (${NOTES[CAMELOT_MINOR.indexOf(num)]} minor)`],
+  [`${num}B`, `${num}B (${NOTES[CAMELOT_MAJOR.indexOf(num)]} major)`],
+])
+
 const TEXT_OPS = [['contains', 'contains'], ['is', 'is'], ['not', 'is not'], ['excludes', "doesn't contain"]]
 const NUMBER_OPS = [['gte', 'at least'], ['lte', 'at most'], ['eq', 'exactly']]
 
@@ -17,6 +26,10 @@ export const SMART_FIELDS = {
   plays: { label: 'Plays', ops: NUMBER_OPS, input: 'number', placeholder: '10' },
   liked: { label: 'Liked', ops: [['is', 'yes'], ['not', 'no']], input: 'none' },
   duration: { label: 'Length', ops: [['gte', 'at least'], ['lte', 'at most']], input: 'number', placeholder: '5', unit: 'min' },
+  // Tempo, key and energy: from tags or imports, else Analyse Library (Downloads → Others).
+  bpm: { label: 'Tempo', ops: [['gte', 'at least'], ['lte', 'at most']], input: 'number', placeholder: '120', unit: 'BPM' },
+  key: { label: 'Key', ops: [['is', 'is'], ['mixes', 'mixes with'], ['not', 'is not']], input: 'select', options: KEY_OPTIONS },
+  energy: { label: 'Energy', ops: [['gte', 'at least'], ['lte', 'at most']], input: 'number', placeholder: '70', unit: '%' },
   quality: {
     label: 'Quality',
     ops: [['is', 'is'], ['not', 'is not']],
@@ -39,6 +52,8 @@ export const SMART_SORTS = [
   ['added', 'Recently added'],
   ['plays', 'Most played'],
   ['played', 'Recently played'],
+  ['tempo', 'Tempo, slowest first'],
+  ['smooth', 'Magic Sort (smooth transitions)'],
   ['random', 'Random (new order each time)'],
 ]
 
@@ -82,7 +97,7 @@ export function describeRule(rule) {
   if (spec.input === 'select') value = spec.options.find(([id]) => id === rule.value)?.[1] || rule.value
   if (spec.input === 'folder') value = folderName(rule.value)
   if (spec.input === 'days') value = `${rule.value} ${spec.suffix?.[rule.op] || 'days'}`
-  if (spec.unit) value = `${rule.value} ${spec.unit}`
+  if (spec.unit) value = spec.unit === '%' ? `${rule.value}%` : `${rule.value} ${spec.unit}`
   return `${spec.label} ${op} ${value}`
 }
 

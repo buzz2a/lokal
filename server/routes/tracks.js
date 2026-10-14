@@ -588,6 +588,14 @@ router.post('/fetch-missing-genres', (req, res) => {
 })
 router.get('/genres-status', (req, res) => res.json(require('../../electron/online/genres').libraryGenresStatus()))
 
+// Analyse Library (electron/automix/library.js): every song's tempo, key and loudness.
+const analysisFfmpeg = () => { try { return require('../../electron/ipc/tools').findFfmpeg() } catch { return null } }
+router.post('/analyze-library', (req, res) => {
+  try { res.json(require('../../electron/automix/library').startLibraryAnalysis(getDB(), { ffmpeg: analysisFfmpeg })) } catch (e) { res.json({ error: e.message }) }
+})
+router.get('/analysis-status', (req, res) => res.json(require('../../electron/automix/library').libraryAnalysisStatus(getDB())))
+router.post('/analysis-cancel', (req, res) => res.json(require('../../electron/automix/library').cancelLibraryAnalysis(getDB())))
+
 // The library's files in short (see electron/ipc/libraryKeys.js).
 router.get('/library-keys', (req, res) => {
   try { res.json(require('../../electron/ipc/libraryKeys').libraryKeys(getDB())) } catch (e) { res.json([]) }

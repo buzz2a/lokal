@@ -1,11 +1,26 @@
 // AutoMix's analyses for the window (electron/automix): a song's, by its
-// library file or its online stream, analysed once and kept.
+// library file or its online stream, analysed once and kept; the whole
+// library's in the background (Analyse Library); and Magic Sort, which
+// orders a playlist from them (electron/mixing).
 
 function registerAutomixHandlers(ipcMain) {
   const fs = require('fs')
   const { getDB } = require('./db')
   const { analysisFor } = require('../automix')
+  const library = require('../automix/library')
   const log = message => { try { require('electron-log').info(message) } catch {} }
+  const ffmpeg = () => require('./tools').findFfmpeg()
+
+  ipcMain.handle('automix:analyzeLibrary', () => {
+    try { return library.startLibraryAnalysis(getDB(), { ffmpeg, log }) } catch (e) { return { error: e.message } }
+  })
+  ipcMain.handle('automix:libraryStatus', () => library.libraryAnalysisStatus(getDB()))
+  ipcMain.handle('automix:cancelLibrary', () => library.cancelLibraryAnalysis(getDB()))
+
+  ipcMain.handle('mixing:magicSort', async (event, playlistId) => {
+    const onProgress = progress => { try { event.sender.send('mixing:progress', { playlistId, ...progress }) } catch {} }
+    try { return await require('../mixing/playlist').magicSortPlaylist(getDB(), playlistId, { ffmpeg, log, onProgress }) } catch (e) { return { error: e.message } }
+  })
 
   ipcMain.handle('automix:analyze', async (_, track) => {
     if (!track?.id) return null

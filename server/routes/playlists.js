@@ -927,6 +927,12 @@ router.put('/:id/reorder', (req, res) => {
   res.json({ ok: true })
 })
 
+// Magic Sort (electron/mixing/playlist.js): reordered for smooth transitions.
+router.post('/:id/magic-sort', async (req, res) => {
+  const ffmpeg = () => { try { return require('../../electron/ipc/tools').findFfmpeg() } catch { return null } }
+  try { res.json(await require('../../electron/mixing/playlist').magicSortPlaylist(getDB(), req.params.id, { ffmpeg })) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/:id/deduplicate', (req, res) => {
   try {
     const result = deduplicatePlaylist(getDB(), req.params.id)

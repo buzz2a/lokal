@@ -5,10 +5,16 @@
 //
 //   { match: 'all' | 'any', rules: [{ field, op, value }], sort, limit }
 //
+// Tempo, key and energy come from the files' tags or imports, else AutoMix's
+// analysis (Analyse Library fills them in for the whole library); the
+// "smooth" order is Magic Sort's (electron/mixing).
+//
 // Shared by the desktop app (electron/ipc/scanner.js) and the web server
 // (server/routes/playlists.js).
 
 const { tierFilter } = require('../quality')
+const { parseCamelot, mixesWith, keyOf } = require('../mixing/camelot')
+const { ensureTable } = require('../automix')
 
 const DAY = 24 * 60 * 60
 const SORTS = {
@@ -19,7 +25,10 @@ const SORTS = {
   artist: 't.artist COLLATE NOCASE, t.album COLLATE NOCASE, t.track_num, t.title COLLATE NOCASE',
   album: 't.album COLLATE NOCASE, t.track_num, t.title COLLATE NOCASE',
   year: 't.year DESC, t.album COLLATE NOCASE, t.track_num',
+  tempo: 't.tempo IS NULL, t.tempo, t.artist COLLATE NOCASE, t.title COLLATE NOCASE',
   random: 'RANDOM()',
+  // Magic Sort, after the query (smartTracks); the limit takes the first by artist.
+  smooth: 't.artist COLLATE NOCASE, t.album COLLATE NOCASE, t.track_num, t.title COLLATE NOCASE',
 }
 const MAX_LIMIT = 5000
 const SOURCES = ['local', 'yt', 'sc', 'soulseek', 'addon', 'web']
@@ -82,6 +91,22 @@ const FIELDS = {
   plays: (op, value, params) => numberCondition('IFNULL(t.play_count, 0)', op, value, params),
   // Minutes in the editor, seconds in the library.
   duration: (op, value, params) => numberCondition('t.duration', op, value, params, 60),
+  bpm: (op, value, params) => numberCondition('t.tempo', op, value, params),
+  // A Camelot key ("8A"): that key, or the keys that mix with it (one step
+  // round the wheel, the relative major/minor). "Is not" leaves out songs
+  // whose key isn't known.
+  key: (op, value, params) => {
+    const key = parseCamelot(value)
+    if (!key) return null
+    const keys = op === 'mixes' ? mixesWith(key) : [key]
+    const match = `(${keys.map(each => { const { root, mode } = keyOf(each); params.push(root, mode); return '(t.track_key = ? AND t.mode = ?)' }).join(' OR ')})`
+    return op === 'not' ? `(t.track_key BETWEEN 0 AND 11 AND t.mode IN (0, 1) AND NOT ${match})` : match
+  },
+  // Percent in the editor, 0–1 in the library: imported energy, else the analysis' (from loudness).
+  energy: (op, value, params, db) => {
+    ensureTable(db)
+    return numberCondition("COALESCE(t.energy, (SELECT json_extract(a.data, '$.energy') FROM track_analysis a WHERE a.key = t.id))", op, value, params, 0.01)
+  },
   added: (op, value, params) => {
     const days = Number(value)
     if (!(days > 0)) return null
@@ -151,7 +176,11 @@ function run(db, query, method) {
 
 /** The tracks of a smart playlist, in its order. */
 function smartTracks(db, rules, userId) {
-  return run(db, smartQuery(db, rules, userId), 'all')
+  const rows = run(db, smartQuery(db, rules, userId), 'all')
+  if (normalizeRules(rules)?.sort !== 'smooth') return rows
+  const { magicSort } = require('../mixing/magicSort')
+  const { withAnalyses } = require('../automix/library')
+  return magicSort(withAnalyses(db, rows)).order.map(index => rows[index])
 }
 
 /**

@@ -226,6 +226,13 @@ export const api = {
   spotifyLikesAck: (progress) => isE() && el()?.spotifyLikesAck ? el().spotifyLikesAck(progress) : Promise.resolve(null),
   // AutoMix: a song's analysis (desktop; electron/automix), null when it can't be.
   automixAnalyze: (track) => isE() && el()?.automixAnalyze ? el().automixAnalyze(track) : Promise.resolve(null),
+  // Analyse Library: starts (or joins) the background analysis of every song; analysisStatus reads its progress.
+  analyzeLibrary: () => isE() ? el().automixAnalyzeLibrary() : apiFetch('/tracks/analyze-library', { method: 'POST' }),
+  analysisStatus: () => isE() ? el().automixLibraryStatus() : apiFetch('/tracks/analysis-status'),
+  cancelAnalysis: () => isE() ? el().automixCancelLibrary() : apiFetch('/tracks/analysis-cancel', { method: 'POST' }),
+  // Magic Sort: reorders a playlist for smooth transitions (electron/mixing); progress while it analyses songs.
+  magicSortPlaylist: (pl) => isE() ? el().magicSortPlaylist(pl) : apiFetch(`/playlists/${pl}/magic-sort`, { method: 'POST' }),
+  onMagicSortProgress: (fn) => isE() && el().onMagicSortProgress ? el().onMagicSortProgress((_, p) => fn(p)) : () => {},
   // Flow's songs: the library with this user's likes and plays (electron/ipc/flow.js; the server's /tracks/flow-pool on the web).
   flowPool: (uid) => isE() && el()?.flowPool ? el().flowPool(uid || 'guest') : apiFetch(`/tracks/flow-pool?userId=${encodeURIComponent(uid || 'guest')}`),
   spotifyLikesPush: (track) => isE() && el()?.spotifyLikesPush ? el().spotifyLikesPush(track) : Promise.resolve({ ok: false }),

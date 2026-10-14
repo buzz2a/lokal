@@ -10,7 +10,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, RotateCcw, AlertCircle, Info, Disc3, Library, ChevronDown, Mic2, Trash2, Square, Search, Download, Clapperboard, CalendarDays, UserRound, ScanSearch, Play, Tags } from 'lucide-react'
+import { Check, X, RotateCcw, AlertCircle, Info, Disc3, Library, ChevronDown, Mic2, Trash2, Square, Search, Download, Clapperboard, CalendarDays, UserRound, ScanSearch, Play, Tags, AudioWaveform } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDownloads, batchOf, isActive, startDownloadSync } from '../store/downloads'
 import { useSearchStore } from '../store/search'
@@ -21,7 +21,7 @@ import { plural } from '../plural'
 import { explainDownloadError } from '../downloadErrors'
 import { ago, useReleaseCheck } from './ReleasesPanel'
 import { cancelVideoIndex, startVideoIndex, useVideoIndex } from '../videoIndex'
-import { useLibraryJobs, startLyricsIndex, cancelLyricsIndex, startGenres, readGenresStatus } from '../libraryJobs'
+import { useLibraryJobs, startLyricsIndex, cancelLyricsIndex, startGenres, readGenresStatus, startAnalysis, cancelAnalysis, readAnalysisStatus } from '../libraryJobs'
 import { useDiscoveryArtists, loadDiscoveryArtists } from '../discoveryArtists'
 
 // ------------------------------------------------------------------ ring
@@ -376,11 +376,13 @@ function OthersTab({ artists, cancelArtists, startArtists, onNavigate }) {
   const videos = useVideoIndex(s => s.progress)
   const lyrics = useLibraryJobs(s => s.lyrics)
   const genres = useLibraryJobs(s => s.genres)
+  const analysis = useLibraryJobs(s => s.analysis)
   const followed = useDiscoveryArtists(s => s.followed)
   const followedLoaded = useDiscoveryArtists(s => s.loaded)
   useEffect(() => {
     if (!followedLoaded) loadDiscoveryArtists().catch(() => {})
     readGenresStatus()
+    readAnalysisStatus()
   }, [followedLoaded])
   const checkReleases = () => useReleaseCheck.getState().start([...followed.values()].map(name => ({ name })))
 
@@ -391,6 +393,11 @@ function OthersTab({ artists, cancelArtists, startArtists, onNavigate }) {
     : genres?.running ? `${plural(genres.updated || 0, 'song')} filled in`
       : genres?.total ? `Done · ${genres.updated || 0} of ${plural(genres.songs || 0, 'song')} filled in`
         : genres?.started ? 'Every song already has a genre' : 'Looks up a genre for songs with none'
+  const analysisDetail = analysis?.error ? analysis.error
+    : analysis?.running ? `${plural(analysis.analysed || 0, 'song')} analysed${analysis.title ? ` · ${analysis.title}` : ''}`
+      : analysis?.finishedAt ? `${analysis.cancelled ? 'Stopped' : 'Done'} ${ago(analysis.finishedAt)} · ${plural(analysis.analysed || 0, 'song')} analysed${analysis.skipped ? `, ${analysis.skipped} skipped` : ''}`
+        : analysis?.remaining === 0 ? 'Every song has its tempo and key'
+          : analysis?.remaining ? `${plural(analysis.remaining, 'song')} without tempo and key yet` : 'Finds every song\'s tempo, key and energy'
 
   const artistsDetail = artists?.running
     ? `${plural(artists.bios || 0, 'bio')}, ${plural(artists.images || 0, 'picture')}${artists.failed ? ` · ${artists.failed} failed` : ''}`
@@ -424,6 +431,9 @@ function OthersTab({ artists, cancelArtists, startArtists, onNavigate }) {
           <TaskRow icon={Tags} label="Genres" running={!!genres?.running} done={genres?.done} total={genres?.total}
             detail={genresDetail} onOpen={() => onNavigate('/settings', { state: { category: 'library' } })}
             onRun={startGenres} runLabel="Fill in" runTitle="Look up a genre for every song that has none" />
+          <TaskRow icon={AudioWaveform} label="Tempo & key" running={!!analysis?.running} done={analysis?.done} total={analysis?.total}
+            detail={analysisDetail} onStop={cancelAnalysis} onOpen={() => onNavigate('/library')}
+            onRun={startAnalysis} runLabel="Analyse" runDisabled={analysis?.remaining === 0} runTitle="Find the tempo, key and energy of every library song (for smart playlists and Magic Sort)" />
         </div>
       </section>
       <section>
@@ -451,6 +461,7 @@ export function DownloadManagerPanel() {
   const [artistRefresh, cancelArtistRefresh, startArtistRefresh] = useArtistRefreshStatus(panelOpen)
   const lyricsIndex = useLibraryJobs(s => !!s.lyrics?.running)
   const genresJob = useLibraryJobs(s => !!s.genres?.running)
+  const analysisJob = useLibraryJobs(s => !!s.analysis?.running)
   const panelRef = useRef(null)
 
   // Under the button, growing inwards: from a button on the left of the
@@ -487,7 +498,7 @@ export function DownloadManagerPanel() {
   }, [panelOpen, closePanel])
 
   const active = jobs.filter(isActive)
-  const othersRunning = (releaseCheck ? 1 : 0) + (videoIndex ? 1 : 0) + (artistRefresh?.running ? 1 : 0) + (lyricsIndex ? 1 : 0) + (genresJob ? 1 : 0)
+  const othersRunning = (releaseCheck ? 1 : 0) + (videoIndex ? 1 : 0) + (artistRefresh?.running ? 1 : 0) + (lyricsIndex ? 1 : 0) + (genresJob ? 1 : 0) + (analysisJob ? 1 : 0)
   const finished = jobs.filter(j => !isActive(j))
 
   const findMore = () => {

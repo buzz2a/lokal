@@ -213,6 +213,11 @@ contextBridge.exposeInMainWorld('electron', {
   spotifyLikesPush: (track) => invoke('spotifyLikes:push', track),
   // AutoMix: a song's analysis (electron/automix)
   automixAnalyze: (track) => invoke('automix:analyze', track),
+  automixAnalyzeLibrary: () => invoke('automix:analyzeLibrary'),
+  automixLibraryStatus: () => invoke('automix:libraryStatus'),
+  automixCancelLibrary: () => invoke('automix:cancelLibrary'),
+  magicSortPlaylist: (playlistId) => invoke('mixing:magicSort', playlistId),
+  onMagicSortProgress: (fn) => on('mixing:progress', fn),
   // Flow's songs (electron/ipc/flow.js)
   flowPool: (userId) => invoke('flow:pool', userId),
   // Casting (electron/ipc/cast.js)

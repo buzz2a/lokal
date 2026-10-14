@@ -1,6 +1,7 @@
 // Library jobs that run in the background (Settings → Library has their
-// switches too): Index Lyrics and Fill In Genres, followed here for the whole
-// app so the Downloads panel can show and start them.
+// switches too): Index Lyrics, Fill In Genres and Analyse (every song's tempo,
+// key and energy), followed here for the whole app so the Downloads panel can
+// show and start them.
 import { create } from 'zustand'
 import { api } from './api.js'
 
@@ -9,6 +10,8 @@ export const useLibraryJobs = create(() => ({
   lyrics: null,
   // Fill In Genres: { running, done, total, songs, updated, started?, error? } or null before it's read.
   genres: null,
+  // Analyse: { running, done, total, analysed, skipped, remaining?, title?, error? } or null before it's read.
+  analysis: null,
 }))
 
 let listening = false
@@ -46,4 +49,27 @@ export async function startGenres() {
   const status = await Promise.resolve(api.fetchMissingGenres()).catch(error => ({ error: error?.message || 'Could not start' }))
   useLibraryJobs.setState({ genres: status?.error ? { error: status.error } : { ...status, started: true } })
   if (!status?.error) readGenresStatus()
+}
+
+/** Reads Analyse's progress, and keeps reading it every few seconds while it runs. */
+let analysisTimer = null
+export async function readAnalysisStatus() {
+  clearTimeout(analysisTimer)
+  const status = await Promise.resolve(api.analysisStatus?.()).catch(() => null)
+  clearTimeout(analysisTimer)
+  if (!status || status.error) return
+  useLibraryJobs.setState({ analysis: status })
+  if (status.running) analysisTimer = setTimeout(readAnalysisStatus, 2000)
+}
+
+export async function startAnalysis() {
+  if (useLibraryJobs.getState().analysis?.running) return
+  const status = await Promise.resolve(api.analyzeLibrary()).catch(error => ({ error: error?.message || 'Could not start' }))
+  useLibraryJobs.setState({ analysis: status })
+  if (!status?.error) readAnalysisStatus()
+}
+
+export async function cancelAnalysis() {
+  await Promise.resolve(api.cancelAnalysis()).catch(() => null)
+  readAnalysisStatus()
 }

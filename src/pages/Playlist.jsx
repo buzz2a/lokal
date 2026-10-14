@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Heart, Music, Play, Shuffle, Trash2, Edit2, Check, X, RefreshCw, Image as ImageIcon, AlertCircle, Search, Sparkles, SlidersHorizontal, Share2 } from 'lucide-react'
+import { Heart, Music, Play, Shuffle, Trash2, Edit2, Check, X, RefreshCw, Image as ImageIcon, AlertCircle, Search, Sparkles, SlidersHorizontal, Share2, Wand2 } from 'lucide-react'
 import { usePlayerStore, useAppStore } from '../store/player'
 import TrackList from '../components/TrackList'
 import PlaylistCover from '../components/PlaylistCover'
@@ -18,6 +18,7 @@ import { usePlaylistSortStore, playlistSortPreference } from '../store/playlistS
 import { sortPlaylistTracks } from '../playlistSorting'
 import { filterPlaylistTracks } from '../playlistSearch'
 import { useTranslation } from '../i18n'
+import { showLoadingToast } from '../components/Toaster'
 
 // The playlist's actions, as plain icons beside the Play button.
 const ICON_BUTTON = 'flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
@@ -55,6 +56,7 @@ export default function Playlist() {
   const playlistSearchRef = useRef(null)
   const visibleTracks = useMemo(() => filterPlaylistTracks(sortedTracks, playlistSearch), [sortedTracks, playlistSearch])
   const [showResolveGhosts, setShowResolveGhosts] = useState(false)
+  const [magicSorting, setMagicSorting] = useState(false)
   const playQueue = usePlayerStore(s => s.playQueue)
   const location = useLocation()
   // load() below re-fetches on every id change but doesn't clear `playlist`
@@ -195,6 +197,31 @@ export default function Playlist() {
       setTracks(reorderedTracks)
     } catch (err) {
       console.error('Failed to reorder playlist:', err)
+    }
+  }
+
+  // Magic Sort (electron/mixing): songs not analysed yet are analysed first, then the
+  // playlist is saved in the new order and shown in it.
+  const magicSort = async () => {
+    if (magicSorting) return
+    if (!confirm('Magic Sort reorders this playlist so each song leads into the next (key, tempo, energy), building to a peak and easing off. Replace the current order?')) return
+    setMagicSorting(true)
+    const toast = showLoadingToast('Magic Sort: working out the order…')
+    const stop = api.onMagicSortProgress(progress => {
+      if (String(progress?.playlistId) === String(id) && progress.total) toast.update(`Magic Sort: analysing songs, ${progress.done} of ${progress.total}…`)
+    })
+    try {
+      const result = await api.magicSortPlaylist(id)
+      if (result?.error) { toast.close(result.error); return }
+      const percent = value => `${Math.round((Number(value) || 0) * 100)}%`
+      setSort({ column: 'number', direction: 'asc' })
+      window.dispatchEvent(new CustomEvent('lokal:playlist-updated', { detail: { playlistId: id } }))
+      toast.close(result.known ? `Reordered · transitions ${percent(result.before)} → ${percent(result.after)} smooth` : 'Reordered, but no song has a known tempo or key yet')
+    } catch (error) {
+      toast.close(error?.message || 'Magic Sort failed')
+    } finally {
+      stop()
+      setMagicSorting(false)
     }
   }
 
@@ -411,6 +438,11 @@ export default function Playlist() {
                   >
                     <AlertCircle size={17} />
                     <span className="absolute -right-0.5 -top-0.5 min-w-[16px] rounded-full bg-yellow-400 px-1 text-center text-[9px] font-semibold leading-4 text-black tabular-nums">{ghostTracks.length > 99 ? '99+' : ghostTracks.length}</span>
+                  </button>
+                )}
+                {!smart && tracks.length >= 3 && (
+                  <button type="button" onClick={magicSort} disabled={magicSorting} aria-label="Magic Sort" title="Magic Sort: reorder for smooth transitions" className={ICON_BUTTON}>
+                    <Wand2 size={17} className={magicSorting ? 'animate-pulse text-accent' : ''} />
                   </button>
                 )}
                 {!smart && playlist?.id && <PlaylistSyncButton playlistId={playlist.id} userId={user?.id} buttonClassName={ICON_BUTTON} />}

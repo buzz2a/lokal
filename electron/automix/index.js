@@ -92,7 +92,7 @@ function analysisFor({ db, key, source, ffmpeg, trackId = null, log = () => {} }
   if (row && row.version === VERSION) {
     try {
       const data = JSON.parse(row.data)
-      return Promise.resolve(data?.tooLong ? null : data)
+      return Promise.resolve(data?.tooLong || data?.tooShort ? null : data)
     } catch {}
   }
   if (running.has(key)) return running.get(key)
@@ -104,7 +104,12 @@ function analysisFor({ db, key, source, ffmpeg, trackId = null, log = () => {} }
       if (!binary) return null
       const started = Date.now()
       const pcm = await decode(binary, where.file || where.url, where.headers)
-      if (pcm.length < RATE * 4 * 5) return null // under 5 s: nothing to plan with
+      if (pcm.length < RATE * 4 * 5) {
+        // Under 5 s (a sample, a jingle): nothing to plan with. Remembered, so
+        // Analyse Library doesn't decode it again each run.
+        db.prepare('INSERT OR REPLACE INTO track_analysis (key, version, data) VALUES (?, ?, ?)').run(key, VERSION, JSON.stringify({ tooShort: true }))
+        return null
+      }
       if (pcm.length > RATE * 4 * MAX_SECONDS) {
         // Longer than the limit: its end was never heard, so it isn't planned
         // from (remembered, so it isn't decoded again each time).
@@ -134,4 +139,4 @@ function analysisFor({ db, key, source, ffmpeg, trackId = null, log = () => {} }
   return job
 }
 
-module.exports = { analysisFor, decode, analyzePcm }
+module.exports = { analysisFor, decode, analyzePcm, ensureTable }
