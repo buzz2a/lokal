@@ -23,14 +23,17 @@ function topGenre(item) {
   return list.length ? titleCase(list[0].name) : null
 }
 
-/** The release to show a recording on: an official album first. */
-function pickRelease(releases = []) {
-  const score = release => (release.status === 'Official' ? 2 : 0) + (release['release-group']?.['primary-type'] === 'Album' ? 1 : 0)
+/** The release to show a recording on: the song's own album if it's there, else an official album, earliest first. */
+function pickRelease(releases = [], album = '') {
+  const want = String(album || '').trim().toLowerCase()
+  const score = release => (want && String(release.title || '').trim().toLowerCase() === want ? 4 : 0)
+    + (release.status === 'Official' ? 2 : release.status === 'Bootleg' ? -2 : 0)
+    + (release['release-group']?.['primary-type'] === 'Album' ? 1 : 0)
   return [...releases].sort((a, b) => score(b) - score(a) || String(a.date || '9999').localeCompare(String(b.date || '9999')))[0] || null
 }
 
-function recordingCandidate(recording, isrc = null) {
-  const release = pickRelease(recording.releases)
+function recordingCandidate(recording, isrc = null, album = '') {
+  const release = pickRelease(recording.releases, album)
   const track = release?.media?.[0]?.track?.[0]
   return {
     provider: 'musicbrainz',
@@ -55,12 +58,12 @@ async function lookupTrack(query, ctx) {
   if (query.isrc) {
     const found = await get(`${API}/isrc/${encodeURIComponent(query.isrc)}?inc=artist-credits+releases&fmt=json`, ctx)
     const recordings = found?.recordings || []
-    if (recordings.length) return recordings.slice(0, 5).map(recording => recordingCandidate(recording, query.isrc))
+    if (recordings.length) return recordings.slice(0, 5).map(recording => recordingCandidate(recording, query.isrc, query.album))
   }
   if (!query.title) return []
   const terms = [`recording:${quoted(query.title)}`, query.artist && `artist:${quoted(query.artist)}`].filter(Boolean).join(' AND ')
   const data = await get(`${API}/recording/?${new URLSearchParams({ query: terms, fmt: 'json', limit: '8' })}`, ctx)
-  return (data?.recordings || []).map(recording => recordingCandidate(recording))
+  return (data?.recordings || []).map(recording => recordingCandidate(recording, null, query.album))
 }
 
 function releaseCandidate(release) {

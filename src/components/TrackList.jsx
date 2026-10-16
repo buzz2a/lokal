@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Play, Pause, Heart, Plus, Camera, Trash2, Music, LibraryBig, Clock, ListEnd, GripVertical, X, Check, Edit2, Search, Download, AlertCircle, Gem, Disc3, User, ListMinus, MoreHorizontal, Globe, Radio, ChevronUp, ChevronDown } from 'lucide-react'
+import { Play, Pause, Heart, Plus, Camera, Trash2, Music, LibraryBig, Clock, ListEnd, GripVertical, X, Check, Edit2, Search, Download, Sparkles, AlertCircle, Gem, Disc3, User, ListMinus, MoreHorizontal, Globe, Radio, ChevronUp, ChevronDown } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { showToast, showLoadingToast } from './Toaster'
 import { canGetLossless, openLossless, formatLabel, isSuspect, tierOf, TIERS, losslessMenuItem, losslessManyMenuItem } from '../quality'
@@ -9,6 +9,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { api, peekSettings } from '../api'
 import TrackEditModal from './TrackEditModal'
 import BatchEditModal from './BatchEditModal'
+import FixMetadataPanel from './FixMetadataPanel'
 import Modal from './Modal'
 import { trackArtURL, isPlayable, isStreamed, streamRef, loadAddonNames, isAddonProvider, saveTracksToLibrary, libraryDownloadMessage, missingTrackCanRedownload } from '../onlineTracks'
 import SaveToLibraryButton from './SaveToLibraryButton'
@@ -147,6 +148,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
   const [dragOverId, setDragOverId] = useState(null)
   const [editingTrack, setEditingTrack] = useState(null)
   const [showBatchEdit, setShowBatchEdit] = useState(false)
+  const [fixingTracks, setFixingTracks] = useState(null)
   // { tracks, title? }: the Delete from Library confirmation.
   const [deleteRequest, setDeleteRequest] = useState(null)
   const [trackOverrides, setTrackOverrides] = useState({})
@@ -595,6 +597,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
       { separator: true },
       one?.album && { label: 'Go to album', icon: Disc3, onSelect: () => navigateToTrackAlbum(navigate, one) },
       !resolveTracks && (one ? { label: 'Edit info', icon: Edit2, onSelect: () => setEditingTrack(one) } : { label: `Edit${count}`, icon: Edit2, onSelect: () => setShowBatchEdit(true) }),
+      !resolveTracks && { label: one ? 'Fix metadata…' : `Fix metadata${count}…`, icon: Sparkles, onSelect: () => setFixingTracks(list) },
       !resolveTracks && one && api.isElectron && { label: 'Replace artwork', icon: Camera, onSelect: () => replaceArtwork(one, { stopPropagation() {} }) },
       { separator: true },
       onRemove && { label: one ? 'Remove from this playlist' : `Remove${count} from this playlist`, icon: ListMinus, onSelect: () => removeMany(list) },
@@ -722,6 +725,14 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
     window.dispatchEvent(new Event('lokal:refresh'))
   }
 
+  // Fix Metadata applied (or undid) a change: the rows show it at once.
+  const handleMetadataApplied = (updatedTracks) => {
+    const list = (updatedTracks || []).filter(track => track?.id)
+    if (!list.length) return
+    syncTracks(list)
+    setTrackOverrides(prev => ({ ...prev, ...Object.fromEntries(list.map(track => [track.id, track])) }))
+  }
+
   const handleQuickAdd = async (track, e) => {
     e?.stopPropagation()
     if (!onQuickAdd) return
@@ -791,6 +802,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
           { label: 'Add to playlist', icon: Plus, onClick: () => runResolved(selectedTracks(), addToPlaylistMany) },
           { label: 'Download', icon: Download, onClick: () => downloadSongs(selectedTracks()), hidden: !selectedTracks().some(track => isStreamed(track) || needsResolution(track)) },
           { label: 'Edit', icon: Edit2, onClick: () => setShowBatchEdit(true), hidden: !!resolveTracks },
+          { label: 'Fix metadata', icon: Sparkles, onClick: () => setFixingTracks(selectedTracks()), hidden: !!resolveTracks },
           { label: 'Remove', icon: ListMinus, onClick: () => removeMany(selectedTracks()), hidden: !onRemove },
           { label: 'Delete', icon: Trash2, danger: true, onClick: () => askDelete(selectedTracks()), hidden: !!resolveTracks || !libraryTracks(selectedTracks()).length },
         ]}
@@ -1073,6 +1085,13 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
         open={showBatchEdit}
         onClose={() => setShowBatchEdit(false)}
         onSave={handleBatchSave}
+      />
+
+      <FixMetadataPanel
+        open={!!fixingTracks}
+        tracks={fixingTracks || []}
+        onClose={() => setFixingTracks(null)}
+        onApplied={handleMetadataApplied}
       />
 
       <DeleteTracksDialog request={deleteRequest} onClose={() => setDeleteRequest(null)} onDone={() => selection.clear()} />

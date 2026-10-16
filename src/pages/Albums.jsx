@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Check, Clock, Disc3, Download, Globe, ListEnd, Loader2, Play, Plus, Search, Shuffle, Trash2, Radio, Gem } from 'lucide-react'
+import { ArrowLeft, Check, Clock, Disc3, Download, Globe, ListEnd, Loader2, Play, Plus, Search, Shuffle, Trash2, Radio, Gem, Sparkles } from 'lucide-react'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
 import { api, peekSettings } from '../api'
 import { peekCache, writeCache, usePageReady } from '../pageCache'
-import { makeAlbumContext } from '../playbackContext'
+import { makeAlbumContext, navigateToTrackAlbum } from '../playbackContext'
+import FixMetadataPanel from '../components/FixMetadataPanel'
 import FadeImg from '../components/FadeImg'
 import ImageZoom from '../components/ImageZoom'
 import CoverPlay from '../components/CoverPlay'
@@ -148,6 +149,7 @@ export default function Albums() {
   const setAlbums = (list) => { writeCache('albums:all', list); setAlbumsState(list) }
   const [selectedAlbum, setSelectedAlbum] = useState(null)
   const [albumTracks, setAlbumTracks] = useState([])
+  const [fixingTracks, setFixingTracks] = useState(null)
   const [loadingAlbums, setLoadingAlbums] = useState(() => !peekCache('albums:all'))
   const [loadingTracks, setLoadingTracks] = useState(false)
   const [query, setQuery] = useState('')
@@ -394,9 +396,22 @@ export default function Albums() {
       { label: 'Add to playlist…', icon: Plus, onSelect: () => addToPlaylistMany(list) },
       list.length === 1 && { label: 'Start radio', icon: Radio, onSelect: () => openRadio(navigate, list[0], useAppStore.getState().user?.id) },
       list.length === 1 ? losslessMenuItem(list[0], Gem) : losslessManyMenuItem(list, Gem),
+      { label: list.length > 1 ? `Fix metadata${count}…` : 'Fix metadata…', icon: Sparkles, onSelect: () => setFixingTracks(list) },
       { separator: true },
       { label: list.length > 1 ? `Delete${count} from library` : 'Delete from library', icon: Trash2, danger: true, onSelect: () => askDeleteTracks(list) },
     ])
+  }
+
+  // Fix Metadata changed songs of this album: shown at once; a renamed album opens under its new name.
+  const handleMetadataApplied = (updated) => {
+    const fresh = new Map((updated || []).filter(track => track?.id).map(track => [track.id, track]))
+    if (!fresh.size) return
+    setAlbumTracks(current => current.map(track => fresh.get(track.id) || track))
+    const moved = [...fresh.values()]
+    if (selectedAlbum?.title && moved.every(track => track.album && track.album !== selectedAlbum.title) && albumTracks.every(track => fresh.has(track.id))) {
+      setFixingTracks(null)
+      navigateToTrackAlbum(navigate, moved[0])
+    }
   }
 
   const playAlbumRelease = async (album) => {
@@ -498,6 +513,10 @@ export default function Albums() {
                   className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-white transition-colors hover:border-accent/50 disabled:opacity-40">
                   <Download size={15} /> {downloadingMissing ? 'Finding songs…' : `Download missing (${merged.missing.length})`}
                 </button>
+              )}
+              {!showOnline && albumTracks.length > 0 && (
+                <button onClick={() => setFixingTracks(albumTracks)} title={t('Look the album up online and fix its details')}
+                  className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-white transition-colors hover:border-accent/50"><Sparkles size={15} /> {t('Fix metadata')}</button>
               )}
               {connected && <RefreshButton onClick={() => setReloadOnline(n => n + 1)} loading={onlineAlbum.loading} loadedAt={onlineAlbum.loadedAt} />}
             </AlbumHero>
@@ -627,6 +646,7 @@ export default function Albums() {
         )}
       </div>
       {releases.elements}
+      <FixMetadataPanel open={!!fixingTracks} tracks={fixingTracks || []} onClose={() => setFixingTracks(null)} onApplied={handleMetadataApplied} />
     </div>
   )
 }

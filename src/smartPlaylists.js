@@ -11,6 +11,13 @@ const KEY_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap(num => [
   [`${num}B`, `${num}B (${NOTES[CAMELOT_MAJOR.indexOf(num)]} major)`],
 ])
 
+/** "8A · A minor" for a stored key (root pitch class, C = 0; mode 1 major, 0 minor), or ''. */
+export function keyLabel(root, mode) {
+  const r = Number(root)
+  if (root == null || root === '' || !Number.isInteger(r) || r < 0 || r > 11 || (Number(mode) !== 0 && Number(mode) !== 1) || mode == null || mode === '') return ''
+  return Number(mode) === 1 ? `${CAMELOT_MAJOR[r]}B · ${NOTES[r]} major` : `${CAMELOT_MINOR[r]}A · ${NOTES[r]} minor`
+}
+
 const TEXT_OPS = [['contains', 'contains'], ['is', 'is'], ['not', 'is not'], ['excludes', "doesn't contain"]]
 const NUMBER_OPS = [['gte', 'at least'], ['lte', 'at most'], ['eq', 'exactly']]
 

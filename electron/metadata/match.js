@@ -49,9 +49,14 @@ function durationScore(local, found) {
 
 const sameIsrc = (left, right) => !!left && !!right && String(left).toUpperCase() === String(right).toUpperCase()
 
-/** How well `fields` (a result) fit `query` ({ title, artist, duration, isrc }), 0–100. */
+/**
+ * How well `fields` (a result) fit `query` ({ title, artist, album, duration,
+ * isrc }), 0–100. The album counts a little, so the song's own release beats
+ * a compilation with the same recording.
+ */
 function scoreTrack(query = {}, fields = {}) {
-  const score = 50 * titleScore(query.title, fields.title) + 35 * artistScore(query.artist, fields.artist) + 15 * durationScore(query.duration, fields.duration)
+  const album = query.album && fields.album ? titleScore(query.album, fields.album) : 0.5
+  const score = 45 * titleScore(query.title, fields.title) + 32 * artistScore(query.artist, fields.artist) + 13 * durationScore(query.duration, fields.duration) + 10 * album
   if (sameIsrc(query.isrc, fields.isrc)) return Math.round(Math.max(score, 97))
   return Math.round(score)
 }

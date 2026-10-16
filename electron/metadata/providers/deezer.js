@@ -51,7 +51,8 @@ async function lookupTrack(query, ctx) {
     if (candidate) return [candidate]
   }
   if (!query.title) return []
-  const q = [query.artist && `artist:"${query.artist}"`, `track:"${query.title}"`].filter(Boolean).join(' ')
+  // Plain words: Deezer's artist:"" track:"" form finds nothing for many songs.
+  const q = [query.artist, query.title].filter(Boolean).join(' ')
   const found = await get(`${API}/search/track?${new URLSearchParams({ q, limit: '8' })}`, ctx)
   const results = []
   for (const track of (found?.data || []).slice(0, 4)) {
@@ -91,7 +92,7 @@ function albumCandidate(album) {
 
 async function lookupAlbum(query, ctx) {
   if (!query.album) return []
-  const q = [query.artist && `artist:"${query.artist}"`, `album:"${query.album}"`].filter(Boolean).join(' ')
+  const q = [query.artist, query.album].filter(Boolean).join(' ')
   const found = await get(`${API}/search/album?${new URLSearchParams({ q, limit: '5' })}`, ctx)
   const releases = []
   for (const album of (found?.data || []).slice(0, 3)) {
