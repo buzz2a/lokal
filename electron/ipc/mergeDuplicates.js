@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 const { isInside, moveToTrash, forgetDownloads } = require('./trackFiles')
+const { moveProvenance } = require('../metadata/store')
 
 const isVirtual = file => !file || /^(ghost|stream):\/\//.test(file)
 const realPath = file => {
@@ -50,12 +51,16 @@ async function mergeDuplicates(db, keepId, removeIds) {
     }
     db.transaction(() => {
       for (const loser of losers) {
+        const taken = []
         for (const field of ['artwork_path', 'album', 'year', 'genre']) {
           if (!winner[field] && loser[field]) {
             db.prepare(`UPDATE tracks SET ${field} = ? WHERE id = ?`).run(loser[field], keepId)
             winner[field] = loser[field]
+            taken.push(field)
           }
         }
+        // What the kept copy took keeps saying where it came from.
+        moveProvenance(db, loser.id, keepId, taken)
         db.prepare('UPDATE OR IGNORE playlist_tracks SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)
         db.prepare('DELETE FROM playlist_tracks WHERE track_id = ?').run(loser.id)
         db.prepare('UPDATE OR IGNORE user_likes SET track_id = ? WHERE track_id = ?').run(keepId, loser.id)

@@ -122,8 +122,7 @@ function analysisFor({ db, key, source, ffmpeg, trackId = null, log = () => {} }
       // A library song's tempo and key, when it has none of its own (Flow's moods use them).
       if (trackId) {
         try {
-          db.prepare('UPDATE tracks SET tempo = COALESCE(tempo, ?), track_key = COALESCE(track_key, ?), mode = COALESCE(mode, ?) WHERE id = ?')
-            .run(result.bpm, result.key, result.mode, trackId)
+          require('../metadata/store').applyFields(db, trackId, { tempo: result.bpm, track_key: result.key, mode: result.mode }, { source: 'analysis', overwrite: false })
         } catch {}
       }
       log(`automix: analysed ${key} in ${Date.now() - started} ms (${result.bpm} BPM, ${result.camelot}, ends ${result.audibleEnd}s of ${result.duration}s)`)

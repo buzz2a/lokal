@@ -10,6 +10,15 @@ const GAP_MS = 300
 // (it says nothing; recaps leave it out too). Such songs get looked up.
 const NO_GENRE = "(genre IS NULL OR TRIM(genre) = '' OR LOWER(TRIM(genre)) = 'music')"
 const noGenre = genre => !String(genre || '').trim() || String(genre).trim().toLowerCase() === 'music'
+const store = require('../metadata/store')
+
+/** Gives the song `genre` (from iTunes) if it still has none and the user didn't set one; true when it did. */
+function keepGenre(db, id, genre, where = NO_GENRE) {
+  try {
+    if (!db.prepare(`SELECT 1 FROM tracks WHERE id = ? AND ${where}`).get(id)) return false
+    return store.applyFields(db, id, { genre }, { source: 'itunes' }).changed.includes('genre')
+  } catch { return false }
+}
 
 // Songs already looked up this run (found or not): not asked again.
 const looked = new Map()
@@ -58,7 +67,7 @@ async function lookupGenre(db, row, options = {}) {
   const pending = (async () => {
     const genre = await itunesGenre(row.title, row.artist, options).catch(() => null)
     if (genre) {
-      try { db.prepare(`UPDATE tracks SET genre = ? WHERE id = ? AND ${NO_GENRE} AND ${STREAMED}`).run(genre, row.id) } catch {}
+      keepGenre(db, row.id, genre, `${NO_GENRE} AND ${STREAMED}`)
     }
     return genre
   })()
@@ -160,8 +169,7 @@ function startLibraryGenres(db, { fetchImpl = fetch, gapMs = ITUNES_GAP_MS } = {
         const genre = (group.album ? await itunesAlbumGenre(group.album, group.artist, { fetchImpl }).catch(() => null) : null)
           || await itunesGenre(group.title, group.artistOfSong || group.artist, { fetchImpl }).catch(() => null)
         if (genre) {
-          const update = db.prepare(`UPDATE tracks SET genre = ? WHERE id = ? AND ${NO_GENRE}`)
-          for (const id of group.ids) job.updated += update.run(genre, id).changes || 0
+          for (const id of group.ids) if (keepGenre(db, id, genre)) job.updated += 1
         }
       } catch {}
       job.done += 1

@@ -420,51 +420,18 @@ function createGhostTrack(db, entry, sourcePlatform = 'generic', playlistId = 'i
 function applyImportedMetadata(db, trackId, entry = {}) {
   const track = db.prepare('SELECT * FROM tracks WHERE id = ?').get(trackId)
   if (!track) return null
+  // What the import says replaces what the song has, except what the user set.
+  const fields = {}
   const genre = entry.genre || firstGenre(entry.genres)
-  const genres = entry.genres || null
-  const explicitValue = entry.explicit ? 1 : 0
-  db.prepare(`
-    UPDATE tracks SET
-      year = COALESCE(?, year),
-      genre = COALESCE(NULLIF(?, ''), genre),
-      genres = COALESCE(NULLIF(?, ''), genres),
-      record_label = COALESCE(NULLIF(?, ''), record_label),
-      explicit = CASE WHEN ? IS NULL THEN explicit ELSE ? END,
-      danceability = COALESCE(?, danceability),
-      energy = COALESCE(?, energy),
-      track_key = COALESCE(?, track_key),
-      loudness = COALESCE(?, loudness),
-      mode = COALESCE(?, mode),
-      speechiness = COALESCE(?, speechiness),
-      acousticness = COALESCE(?, acousticness),
-      instrumentalness = COALESCE(?, instrumentalness),
-      liveness = COALESCE(?, liveness),
-      valence = COALESCE(?, valence),
-      tempo = COALESCE(?, tempo),
-      time_signature = COALESCE(?, time_signature)
-    WHERE id = ?
-  `).run(
-    entry.year ?? null,
-    genre,
-    genres,
-    entry.record_label || null,
-    entry.explicit === undefined || entry.explicit === null || entry.explicit === '' ? null : explicitValue,
-    entry.explicit === undefined || entry.explicit === null || entry.explicit === '' ? null : explicitValue,
-    entry.danceability ?? null,
-    entry.energy ?? null,
-    entry.track_key ?? null,
-    entry.loudness ?? null,
-    entry.mode ?? null,
-    entry.speechiness ?? null,
-    entry.acousticness ?? null,
-    entry.instrumentalness ?? null,
-    entry.liveness ?? null,
-    entry.valence ?? null,
-    entry.tempo ?? null,
-    entry.time_signature ?? null,
-    trackId
-  )
-  return db.prepare('SELECT * FROM tracks WHERE id = ?').get(trackId)
+  if (entry.year != null && entry.year !== '') fields.year = entry.year
+  if (genre) fields.genre = genre
+  if (entry.genres) fields.genres = entry.genres
+  if (entry.record_label) fields.record_label = entry.record_label
+  if (!(entry.explicit === undefined || entry.explicit === null || entry.explicit === '')) fields.explicit = entry.explicit ? 1 : 0
+  for (const field of ['danceability', 'energy', 'track_key', 'loudness', 'mode', 'speechiness', 'acousticness', 'instrumentalness', 'liveness', 'valence', 'tempo', 'time_signature']) {
+    if (entry[field] != null) fields[field] = entry[field]
+  }
+  return require('../../electron/metadata/store').applyFields(db, trackId, fields, { source: 'import' }).track
 }
 
 function buildImportPreview(db, entries = []) {

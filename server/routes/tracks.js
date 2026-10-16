@@ -6,6 +6,7 @@ const { getLibraryFolders } = require('../../electron/libraryFolder')
 const { recordListeningEvent } = require('../../electron/ipc/recaps')
 const path = require('path')
 const fs = require('fs')
+const metadataStore = require('../../electron/metadata/store')
 
 
 
@@ -256,106 +257,6 @@ function buildPossibleDuplicateGroups(tracks = []) {
     .sort((left, right) => right.confidence - left.confidence)
 }
 
-function slugify(str) {
-  return (str || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown'
-}
-
-function getKeepCommaArtists() {
-  const keepComma = new Set([
-    'tyler, the creator', 'earth, wind & fire', 'crosby, stills & nash',
-    'crosby, stills, nash & young', 'simon & garfunkel', 'emerson, lake & palmer',
-    'syd barrett', 'pete & bas', 'pe & ne',
-  ])
-  try {
-    const setting = getDB().prepare("SELECT value FROM settings WHERE key = 'keep_comma_artists'").get()
-    if (setting?.value) {
-      const userDefined = JSON.parse(setting.value)
-      userDefined.forEach(artist => keepComma.add(String(artist || '').toLowerCase().trim()))
-    }
-  } catch {}
-  return keepComma
-}
-
-function splitArtists(raw) {
-  if (!raw) return []
-  const lower = raw.toLowerCase().trim()
-  const keepCommaArtists = getKeepCommaArtists()
-  for (const known of keepCommaArtists) {
-    if (lower === known || lower.startsWith(known + ' ') || lower.endsWith(' ' + known)) return [raw.trim()]
-  }
-  const commaLowerPattern = /,\s+[a-z]/
-  if (commaLowerPattern.test(raw)) return [raw.trim()]
-  let artists = [raw]
-  artists = artists.flatMap(a => a.split(/\s+(?:feat\.|ft\.|featuring)\s+/i))
-  artists = artists.flatMap(a => a.split(/,\s+(?=[A-Z])/))
-  artists = artists.flatMap(a => {
-    const parts = a.split(/\s+(?:&|x|vs\.?)\s+/i)
-    // A split that leaves one-letter pieces isn't a collaboration but one
-    // stylised name ("h x m x d" was becoming the artists h, m and d).
-    return parts.some(part => part.trim().length < 2) ? [a] : parts
-  })
-  return [...new Set(artists.map(a => a.trim()).filter(Boolean))]
-}
-
-function applyBatchField(currentValue, operation) {
-  if (!operation || operation.mode === 'ignore') return { changed: false, value: currentValue }
-  if (operation.mode === 'clear') return { changed: currentValue !== null && currentValue !== '', value: null }
-  if (operation.mode === 'removeText') {
-    const currentText = String(currentValue ?? '')
-    const needle = String(operation.value ?? '')
-    if (!needle) return { changed: false, value: currentValue }
-    const nextText = currentText.split(needle).join('').trim()
-    return { changed: nextText !== currentText, value: nextText || null }
-  }
-  if (operation.mode === 'keepAfterText') {
-    const currentText = String(currentValue ?? '')
-    const needle = String(operation.value ?? '')
-    if (!needle) return { changed: false, value: currentValue }
-    const index = currentText.indexOf(needle)
-    if (index === -1) return { changed: false, value: currentValue }
-    const nextText = currentText.slice(index + needle.length).trim()
-    return { changed: nextText !== currentText, value: nextText || null }
-  }
-  if (operation.mode === 'keepBeforeText') {
-    const currentText = String(currentValue ?? '')
-    const needle = String(operation.value ?? '')
-    if (!needle) return { changed: false, value: currentValue }
-    const index = currentText.indexOf(needle)
-    if (index === -1) return { changed: false, value: currentValue }
-    const nextText = currentText.slice(0, index).trim()
-    return { changed: nextText !== currentText, value: nextText || null }
-  }
-  if (operation.mode === 'fillMissing') {
-    const missing = currentValue === null || currentValue === undefined || String(currentValue) === ''
-    return missing ? { changed: true, value: operation.value ?? null } : { changed: false, value: currentValue }
-  }
-  if (operation.mode === 'replace') {
-    const nextValue = operation.value ?? null
-    return { changed: currentValue !== nextValue, value: nextValue }
-  }
-  return { changed: false, value: currentValue }
-}
-
-function normalizeGenresForBatch(value) {
-  return String(value || '')
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean)
-    .join(', ') || null
-}
-
-function firstGenreForBatch(value) {
-  return normalizeGenresForBatch(value)?.split(',').map(part => part.trim()).filter(Boolean)[0] || null
-}
-
-function clearLyricsStateForTrack(db, trackId, filePath = null) {
-  db.prepare('DELETE FROM lyrics_cache WHERE track_id = ?').run(trackId)
-  db.prepare('DELETE FROM lyrics_translations WHERE track_id = ?').run(trackId)
-  if (filePath) {
-    try { db.prepare('DELETE FROM lyrics_cache WHERE file_path = ?').run(filePath) } catch {}
-  }
-}
-
 function collectAllGenres(db) {
   const rows = db.prepare(`
     SELECT genre, genres
@@ -446,89 +347,6 @@ function scoreRelatedTrack(baseTrack, candidate) {
   if (!sameArtist && sharedGenres > 0 && strongFeatureMatches >= 2) score += 4
   if (baseTrack.explicit && candidate.explicit) score += 0.5
   return score
-}
-
-async function applyBatchTrackUpdates(db, trackIds = [], operations = {}) {
-  if (!Array.isArray(trackIds) || !trackIds.length) return []
-  const { getStorageDir } = require('../../electron/ipc/db')
-  const ids = [...new Set(trackIds.filter(Boolean))]
-  const tracks = ids.map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id)).filter(Boolean)
-  if (!tracks.length) return []
-
-  const artworkOp = operations.artwork
-  if (artworkOp?.mode === 'replace' && artworkOp?.value) {
-    const base64 = String(artworkOp.value).split(',')[1] || ''
-    for (const track of tracks) {
-      const artPath = path.join(getStorageDir(), 'artwork', `${track.id}.jpg`)
-      const dir = path.dirname(artPath)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(artPath, Buffer.from(base64, 'base64'))
-    }
-  }
-
-  const patch = db.transaction(() => {
-    const updatedIds = []
-    for (const track of tracks) {
-      const updates = []
-      const params = []
-      const nextValues = {}
-      for (const field of ['title', 'artist', 'album', 'album_artist', 'track_num', 'year', 'genre', 'genres', 'record_label', 'explicit', 'instrumental']) {
-        const result = applyBatchField(track[field], operations[field])
-        if (result.changed) {
-          updates.push(`${field} = ?`)
-          params.push(result.value)
-          nextValues[field] = result.value
-        }
-      }
-      const hasGenreUpdate = Object.prototype.hasOwnProperty.call(nextValues, 'genre')
-      const hasGenresUpdate = Object.prototype.hasOwnProperty.call(nextValues, 'genres')
-      if (hasGenreUpdate || hasGenresUpdate) {
-        const normalizedGenres = hasGenresUpdate
-          ? normalizeGenresForBatch(nextValues.genres)
-          : normalizeGenresForBatch(track.genres || nextValues.genre || track.genre)
-        const primaryGenre = hasGenreUpdate
-          ? (nextValues.genre || firstGenreForBatch(normalizedGenres))
-          : firstGenreForBatch(normalizedGenres)
-
-        delete nextValues.genre
-        delete nextValues.genres
-        updates.push('genre = ?')
-        params.push(primaryGenre || null)
-        nextValues.genre = primaryGenre || null
-        updates.push('genres = ?')
-        params.push(normalizedGenres)
-        nextValues.genres = normalizedGenres
-      }
-      if (artworkOp?.mode === 'clear' && track.artwork_path) {
-        updates.push('artwork_path = ?')
-        params.push(null)
-      } else if (artworkOp?.mode === 'replace' && artworkOp?.value) {
-        updates.push('artwork_path = ?')
-        params.push(path.join(getStorageDir(), 'artwork', `${track.id}.jpg`))
-      }
-      if (!updates.length) continue
-      params.push(track.id)
-      db.prepare(`UPDATE tracks SET ${updates.join(', ')} WHERE id = ?`).run(...params)
-      updatedIds.push(track.id)
-      if (nextValues.instrumental === 1) {
-        clearLyricsStateForTrack(db, track.id, track.file_path)
-      }
-      if (Object.prototype.hasOwnProperty.call(nextValues, 'artist')) {
-        db.prepare('DELETE FROM artist_track_links WHERE track_id = ?').run(track.id)
-        const artistNames = splitArtists(nextValues.artist)
-        for (const name of artistNames) {
-          const artistId = 'a-' + slugify(name)
-          db.prepare('INSERT OR IGNORE INTO artists (id, name) VALUES (?, ?)').run(artistId, name)
-          db.prepare('UPDATE artists SET name = ? WHERE id = ?').run(name, artistId)
-          db.prepare('INSERT OR IGNORE INTO artist_track_links (artist_id, track_id) VALUES (?, ?)').run(artistId, track.id)
-        }
-      }
-    }
-    db.prepare('DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM artist_track_links)').run()
-    return updatedIds
-  })
-
-  return patch().map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id)).filter(Boolean)
 }
 
 router.get('/library-folders', (req, res) => {
@@ -703,103 +521,19 @@ router.get('/genres', (req, res) => {
 
 router.put('/:id/genre', (req, res) => {
   const { genre } = req.body
-  getDB().prepare('UPDATE tracks SET genre = ? WHERE id = ?').run(genre || null, req.params.id)
+  metadataStore.applyFields(getDB(), req.params.id, { genre: genre || null }, { source: 'user' })
   res.json({ ok: true })
 })
 
 router.put('/:id', (req, res) => {
-  const db = getDB()
-  const currentTrack = db.prepare('SELECT * FROM tracks WHERE id = ?').get(req.params.id)
-  if (!currentTrack) return res.json({ error: 'Track not found' })
-  const {
-    title,
-    artist,
-    album,
-    album_artist,
-    track_num,
-    year,
-    genre,
-    genres,
-    record_label,
-    explicit,
-    instrumental,
-    danceability,
-    energy,
-    track_key,
-    loudness,
-    mode,
-    speechiness,
-    acousticness,
-    instrumentalness,
-    liveness,
-    valence,
-    tempo,
-    time_signature,
-  } = req.body
-  const updates = []
-  const params = []
-  
-  if (title !== undefined) { updates.push('title = ?'); params.push(title) }
-  if (artist !== undefined) { updates.push('artist = ?'); params.push(artist) }
-  if (album !== undefined) { updates.push('album = ?'); params.push(album) }
-  if (album_artist !== undefined) { updates.push('album_artist = ?'); params.push(album_artist) }
-  if (track_num !== undefined) { updates.push('track_num = ?'); params.push(track_num) }
-  if (year !== undefined) { updates.push('year = ?'); params.push(year) }
-  if (record_label !== undefined) { updates.push('record_label = ?'); params.push(record_label) }
-  if (explicit !== undefined) { updates.push('explicit = ?'); params.push(explicit ? 1 : 0) }
-  if (instrumental !== undefined) { updates.push('instrumental = ?'); params.push(instrumental === null ? null : instrumental ? 1 : 0) }
-  if (danceability !== undefined) { updates.push('danceability = ?'); params.push(danceability) }
-  if (energy !== undefined) { updates.push('energy = ?'); params.push(energy) }
-  if (track_key !== undefined) { updates.push('track_key = ?'); params.push(track_key) }
-  if (loudness !== undefined) { updates.push('loudness = ?'); params.push(loudness) }
-  if (mode !== undefined) { updates.push('mode = ?'); params.push(mode) }
-  if (speechiness !== undefined) { updates.push('speechiness = ?'); params.push(speechiness) }
-  if (acousticness !== undefined) { updates.push('acousticness = ?'); params.push(acousticness) }
-  if (instrumentalness !== undefined) { updates.push('instrumentalness = ?'); params.push(instrumentalness) }
-  if (liveness !== undefined) { updates.push('liveness = ?'); params.push(liveness) }
-  if (valence !== undefined) { updates.push('valence = ?'); params.push(valence) }
-  if (tempo !== undefined) { updates.push('tempo = ?'); params.push(tempo) }
-  if (time_signature !== undefined) { updates.push('time_signature = ?'); params.push(time_signature) }
-
-  if (genre !== undefined || genres !== undefined) {
-    const normalizedGenres = genres !== undefined
-      ? normalizeGenresForBatch(genres)
-      : normalizeGenresForBatch(currentTrack.genres || genre || currentTrack.genre)
-    const primaryGenre = genre !== undefined
-      ? (genre || firstGenreForBatch(normalizedGenres))
-      : firstGenreForBatch(normalizedGenres)
-    updates.push('genre = ?')
-    params.push(primaryGenre || null)
-    updates.push('genres = ?')
-    params.push(normalizedGenres)
-  }
-  
-  if (updates.length === 0) return res.json({ error: 'No fields to update' })
-  
-  params.push(req.params.id)
-  const sql = `UPDATE tracks SET ${updates.join(', ')} WHERE id = ?`
-  const result = db.prepare(sql).run(...params)
-  if (artist !== undefined) {
-    db.prepare('DELETE FROM artist_track_links WHERE track_id = ?').run(req.params.id)
-    for (const name of splitArtists(artist)) {
-      const artistId = 'a-' + slugify(name)
-      db.prepare('INSERT OR IGNORE INTO artists (id, name) VALUES (?, ?)').run(artistId, name)
-      db.prepare('UPDATE artists SET name = ? WHERE id = ?').run(name, artistId)
-      db.prepare('INSERT OR IGNORE INTO artist_track_links (artist_id, track_id) VALUES (?, ?)').run(artistId, req.params.id)
-    }
-    db.prepare('DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM artist_track_links)').run()
-  }
-  if (instrumental === 1 || instrumental === true) {
-    clearLyricsStateForTrack(db, req.params.id, currentTrack.file_path)
-  }
-  const track = db.prepare('SELECT * FROM tracks WHERE id = ?').get(req.params.id)
-  res.json({ success: true, changes: result.changes, track })
+  res.json(metadataStore.editTrack(getDB(), req.params.id, req.body || {}))
 })
 
 router.post('/batch-update', async (req, res) => {
   const db = getDB()
   try {
-    const tracks = await applyBatchTrackUpdates(db, req.body?.trackIds || [], req.body?.operations || {})
+    const { getStorageDir } = require('../../electron/ipc/db')
+    const tracks = await metadataStore.applyBatchOperations(db, req.body?.trackIds || [], req.body?.operations || {}, { storageDir: getStorageDir() })
     res.json({ success: true, tracks })
   } catch (e) {
     res.json({ error: e.message })
@@ -825,8 +559,7 @@ router.put('/:id/artwork', (req, res) => {
     }
     
     fs.writeFileSync(artPath, buf)
-    db.prepare('UPDATE tracks SET artwork_path = ? WHERE id = ?').run(artPath, req.params.id)
-    const track = db.prepare('SELECT * FROM tracks WHERE id = ?').get(req.params.id)
+    const track = metadataStore.applyFields(db, req.params.id, { artwork_path: artPath }, { source: 'user' }).track
     res.json(track || { success: true, path: artPath })
   } catch (e) {
     res.json({ error: e.message })

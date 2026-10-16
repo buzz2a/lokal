@@ -305,6 +305,8 @@ function initDB() {
   // The scanner writes these columns: without them indexing would fail later
   // and less clearly, so a failure here stops start-up.
   try { require('../quality').ensureColumns(db) } catch (e) { console.warn('quality columns:', e.message); throw e }
+  // Where each song detail came from, and the history of edits (electron/metadata/store.js).
+  try { require('../metadata/store').ensureTables(db) } catch (e) { console.warn('metadata tables:', e.message) }
   // "Paste my cookie" became the default cookie source. Whoever turned
   // cookies on before without picking a source was using Firefox: keep that.
   // Once only (marked done), so a later "on" with the new default isn't touched.
@@ -395,6 +397,8 @@ function clearDatabaseTables() {
   db.prepare('DELETE FROM lyrics_translations').run()
   db.prepare('DELETE FROM lyrics_cache').run()
   try { db.prepare('DELETE FROM pending_import_metadata').run() } catch {}
+  try { db.prepare('DELETE FROM track_field_meta').run() } catch {}
+  try { db.prepare('DELETE FROM track_meta_history').run() } catch {}
   try { db.prepare('DELETE FROM downloaded_playlists').run() } catch {}
   db.prepare('DELETE FROM playlists').run()
   db.prepare('DELETE FROM tracks').run()
