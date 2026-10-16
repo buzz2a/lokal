@@ -1,16 +1,15 @@
 // A song's artist text read as its artists ("A feat. B" is A and B), and the
 // links that put the song on each artist's page. Shared by the scanner, the
-// metadata store and the web server; nothing here needs Electron.
+// metadata store and the web server; nothing here needs Electron. Artist ids
+// come from electron/artistId.js.
+
+const { resolveArtistId } = require('../artistId')
 
 const KEEP_COMMA_DEFAULTS = [
   'tyler, the creator', 'earth, wind & fire', 'crosby, stills & nash',
   'crosby, stills, nash & young', 'simon & garfunkel', 'emerson, lake & palmer',
   'syd barrett', 'pete & bas', 'pe & ne',
 ]
-
-function slugify(str) {
-  return (str || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown'
-}
 
 /** Names whose comma is part of the name (the defaults plus Settings' list), lower case. */
 function keepCommaArtists(db) {
@@ -56,10 +55,7 @@ function relinkTrackArtists(db, trackId, artist, { cleanup = true } = {}) {
   const row = db.prepare('SELECT file_path FROM tracks WHERE id = ?').get(trackId)
   if (row && !String(row.file_path || '').startsWith('ghost://')) {
     for (const name of splitArtists(artist, keepCommaArtists(db))) {
-      const artistId = 'a-' + slugify(name)
-      db.prepare('INSERT OR IGNORE INTO artists (id, name) VALUES (?, ?)').run(artistId, name)
-      db.prepare('UPDATE artists SET name = ? WHERE id = ?').run(name, artistId)
-      db.prepare('INSERT OR IGNORE INTO artist_track_links (artist_id, track_id) VALUES (?, ?)').run(artistId, trackId)
+      db.prepare('INSERT OR IGNORE INTO artist_track_links (artist_id, track_id) VALUES (?, ?)').run(resolveArtistId(db, name), trackId)
     }
   }
   if (cleanup) dropOrphanArtists(db)
@@ -69,4 +65,4 @@ function dropOrphanArtists(db) {
   db.prepare('DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM artist_track_links)').run()
 }
 
-module.exports = { slugify, keepCommaArtists, splitArtists, relinkTrackArtists, dropOrphanArtists }
+module.exports = { keepCommaArtists, splitArtists, relinkTrackArtists, dropOrphanArtists }

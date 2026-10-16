@@ -5,7 +5,7 @@
 
 **Your music, your files, a modern player.** Lokal is a local-first music player built with Electron and React, for people with big local libraries who want the polish of a streaming app without the subscription: word-by-word synced lyrics, official music videos synced to your files, new releases from the artists you follow, listening recaps, recommendations from Last.fm or YouTube Music, smart playlists, an audio-quality checker, and one search bar that finds, streams and downloads.
 
-![Lokal Music](https://img.shields.io/badge/version-8.3.1-blue) ![Electron](https://img.shields.io/badge/Electron-latest-47848F) ![React](https://img.shields.io/badge/React-19-61DAFB) ![License](https://img.shields.io/badge/license-MIT-green) [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/Wv3zfpG6UT)
+![Lokal Music](https://img.shields.io/badge/version-8.7.5-blue) ![Electron](https://img.shields.io/badge/Electron-latest-47848F) ![React](https://img.shields.io/badge/React-19-61DAFB) ![License](https://img.shields.io/badge/license-MIT-green) [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/Wv3zfpG6UT)
 
 ![Lokal's home page: mixes built from your listening, the song playing in the side panel, and its audio quality under the artist](docs/screenshots/home.webp)
 
@@ -291,7 +291,7 @@ Everything is connected from **Settings → Integrations → Account Connections
 - **YouTube Music** (desktop app): *Sign in* opens YouTube Music in its own Lokal window; use the site's Sign in button. Lokal keeps the session (restored at every start) and uses it for Discovery, your mixes and likes, and to stream songs that need an account. *Verify* checks it's still valid.
 - **Discord Rich Presence:** *Connect* to show what you're listening to ("Listening to…", with the album cover). Use the built-in app, or your own from Discord's developer portal (Settings → Integrations → Discord Rich Presence).
 - **Scrobbling** has one switch per service (Settings → Integrations → Scrobbling), to pause it without signing out.
-- **Phone remote:** open `http://<your computer>:3421/remote` on your phone to control playback. It installs as a web app.
+- **Phone remote:** built into the desktop app. Open **Settings → Phone Remote**, enable it, then scan the QR code or copy the LAN link. Your phone and computer must be on the same Wi-Fi; no `npm run dev:web` is needed.
 - **Web mode:** run Lokal as a server and listen to your library from another device (see [Web Mode Setup](#web-mode-setup)).
 - **Plugins:** install plugins from a folder in **Settings → Plugins**.
 - **Backups:** full app export and import, play-history export, and track metadata import.

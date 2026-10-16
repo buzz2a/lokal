@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('electron', {
   artistApplyMetadataSelection: (id, selection, mode) => invoke('artist:applyMetadataSelection', id, selection, mode),
   artistClearImageOverride: (id) => invoke('artist:clearImageOverride', id),
   artistRename: (id, n) => invoke('artist:rename', id, n),
+  artistsForTrack: (trackId) => invoke('artist:forTrack', trackId),
   artistMerge: (s, t) => invoke('artist:merge', s, t),
   artistDelete: (id) => invoke('artist:delete', id),
   trackSetArtwork: (id, d) => invoke('track:setArtwork', id, d),
@@ -293,7 +294,7 @@ contextBridge.exposeInMainWorld('electron', {
   savePerfSettings: (s) => invoke('perf:save', s),
   setMediaKeyPreference: (enabled) => invoke('mediaKeys:setPreferred', enabled),
   relaunchApp: () => ipcRenderer.send('relaunch-app'),
-  onPerfSettings: (fn) => on('perf-settings', fn),
+  onPerfSettings: (fn) => on('perf-settings', (_, settings) => fn(settings)),
 
   
   getSettings: () => invoke('settings:get'),
@@ -307,6 +308,7 @@ contextBridge.exposeInMainWorld('electron', {
   setKeepCommaArtists: (artists) => invoke('settings:setKeepCommaArtists', artists),
   getTheme: () => invoke('settings:getTheme'),
   saveTheme: (theme, overrides) => invoke('settings:saveTheme', { theme, overrides }),
+  getRemoteConnectionInfo: () => invoke('remote:getConnectionInfo'),
   reportRemoteState: (state) => ipcRenderer.send('remote:stateUpdate', state),
   onRemoteCommand: (fn) => on('remote:command', (_, payload) => fn(payload)),
   onSmtcShuffleRequest: (fn) => on('smtc:shuffleRequested', (_, value) => fn(value)),

@@ -1,9 +1,11 @@
+import { useTranslation } from '../i18n'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mic2, Search, Languages, RotateCcw, Check, ChevronDown, Loader2 } from 'lucide-react'
 import LyricsSearchDrawer from './LyricsSearchDrawer'
 import LyricBreakDots from './LyricBreakDots'
 import { api } from '../api'
+import { isWindowHidden, onWindowVisibility } from '../windowVisibility'
 import { useLyricSubline } from '../lyrics/useLyricSubline'
 import { announceLyricsChanged } from '../lyricLine'
 import { usePlayerStore } from '../store/player'
@@ -73,6 +75,7 @@ function sweepStyle() {
 
 /** One vocal (lead or background): units grouped into unbreakable words. */
 export function Voice({ units, text, wordSync, className, style, voiceRef }) {
+  const { t } = useTranslation()
   if (!wordSync || !units?.length) {
     return <span ref={voiceRef} data-voice="plain" dir="auto" className={className} style={style}>{text}</span>
   }
@@ -146,8 +149,9 @@ export function paintVoice(voiceEl, units, t, live) {
 // ---------------------------------------------------------------- rows
 
 const Row = React.memo(function Row({
-  line, index, until, clock, distance, isFocused, isLive, synced, browsing, wordSync, fullscreen, textScale, duet, sub, onSeek, registerRow,
+  line, index, until, clock, distance, isFocused, isLive, synced, browsing, wordSync, fullscreen, textScale, duet, sub, onSeek, registerRow, onGapCollapse,
 }) {
+  const { t } = useTranslation()
   const rowRef = useRef(null)
   const leadRef = useRef(null)
   const bgRef = useRef(null)
@@ -178,6 +182,7 @@ const Row = React.memo(function Row({
     return (
       <div ref={rowRef} data-row={index} className="w-full" style={{ willChange: 'transform' }}>
         <div
+          onTransitionEnd={event => { if (event.propertyName === 'height' && !open) onGapCollapse?.() }}
           style={{
             height: open ? `${baseSize * 1.5}rem` : 0,
             opacity: open ? 1 : 0,
@@ -286,6 +291,7 @@ const TOOLBAR_FADE = 'transition-[opacity,color,background-color] duration-300 g
 const SYNC_LABEL = { syllable: 'Syllable synced', line: 'Line synced', none: 'Not synced' }
 
 function SourceMenu({ sources, current, attempts, busy, onPick, onRefresh, onSearch, hidden = false }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   // The toolbar hid (full screen idle): the menu goes with it rather than
@@ -320,7 +326,7 @@ function SourceMenu({ sources, current, attempts, busy, onPick, onRefresh, onSea
             transition={{ duration: 0.14 }}
             className="absolute right-0 top-full mt-1.5 z-30 w-64 rounded-xl border border-white/10 bg-[#161616]/95 backdrop-blur-xl shadow-2xl p-1"
           >
-            <p className="px-2.5 pt-1.5 pb-1 text-[10px] uppercase tracking-wider text-white/35">Try another source</p>
+            <p className="px-2.5 pt-1.5 pb-1 text-[10px] uppercase tracking-wider text-white/35">{t("Try another source")}</p>
             {sources.map(s => {
               const status = attempts?.[s.id]
               const note = status === 'syllable' ? 'Syllable' : status === 'line' ? 'Line' : status === 'none' ? 'Plain' : status === 'miss' ? 'Not found' : ''
@@ -353,6 +359,7 @@ function SourceMenu({ sources, current, attempts, busy, onPick, onRefresh, onSea
 }
 
 function Pill({ active, onClick, children, title, disabled }) {
+  const { t } = useTranslation()
   return (
     <button
       onClick={onClick}
@@ -372,6 +379,7 @@ function Pill({ active, onClick, children, title, disabled }) {
 // already shows starts with its lines on the first frame (and refreshes them
 // quietly), instead of "no lyrics", then a skeleton, then the lines.
 function Loading() {
+  const { t } = useTranslation()
   return (
     <div className="w-full flex flex-col gap-5 px-3 pt-4">
       {[0.92, 0.6, 0.8, 0.45, 0.7].map((w, i) => (
@@ -389,10 +397,12 @@ function Loading() {
 
 export default function LyricsPanel({
   track, progress, fullscreen = false, wordSync = true, onLyricsAvailable, onSearchRequest, textScale = 1, isAutoSynced = false,
+  hideToolbar = false, compact = false,
   // The full screen player hides the buttons along with its own after a few
   // seconds without the mouse moving.
   toolbarHidden = false,
 }) {
+  const { t } = useTranslation()
   const setProgressWithAudioUpdate = usePlayerStore(s => s.setProgressWithAudioUpdate)
   const now = useLyricClock(progress)
   const [result, setResult] = useState(() => (track?.id && hasCachedLyrics(track.id) ? peekLyrics(track.id) : null))
@@ -538,9 +548,11 @@ export default function LyricsPanel({
 
   useEffect(() => {
     if (!synced || !lines.length) return
-    let raf
+    let raf = null
+    let hidden = isWindowHidden()
     const tick = () => {
-      raf = requestAnimationFrame(tick)
+      raf = null
+      if (hidden) return
       const t = now()
       const live = new Set(activeRows(lines, t))
       // Lines that just stopped being sung get settled into their final state once.
@@ -565,9 +577,22 @@ export default function LyricsPanel({
         if (sub?.words?.length && refs.subEl) paintVoice(refs.subEl.querySelector('[data-voice="timed"]'), sub.words, t, true)
       }
       paintedRows.current = live
+      raf = requestAnimationFrame(tick)
     }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    const unsubscribeVisibility = onWindowVisibility(nextHidden => {
+      hidden = nextHidden
+      if (hidden) {
+        if (raf !== null) cancelAnimationFrame(raf)
+        raf = null
+      } else if (raf === null) {
+        raf = requestAnimationFrame(tick)
+      }
+    })
+    if (!hidden) raf = requestAnimationFrame(tick)
+    return () => {
+      unsubscribeVisibility()
+      if (raf !== null) cancelAnimationFrame(raf)
+    }
   }, [synced, lines, nextTimes, now, wordSync, subLines])
 
   // When the list re-renders, bring every timed line to its correct resting state.
@@ -583,12 +608,14 @@ export default function LyricsPanel({
   }, [lines, synced, wordSync, focusIdx, subLines, now])
 
   // ---- scrolling: native scroll for browsing, a staggered glide for following
-  const anchorFraction = fullscreen ? 0.22 : 0.26
+  // In the compact card, pin the focused line near the top so a Canvas above it
+  // cannot make the preceding, dimmed line look like the main lyric.
+  const anchorFraction = compact ? 0.03 : fullscreen ? 0.22 : 0.26
   // Full screen, the lyrics start at the top (clear of the buttons and the
   // edge fade) rather than a third of the way down; the line being sung
   // settles at anchorFraction once the song gets there.
   const FULLSCREEN_TOP = { height: '10%', minHeight: '4.5rem' }
-  const scrollToFocus = useCallback((instant) => {
+  const scrollToFocus = useCallback((instant, distanceFraction = 1) => {
     const container = containerRef.current
     const refs = rowsRef.current.get(focusIdx)
     if (!container || !refs?.rowEl) return
@@ -597,8 +624,9 @@ export default function LyricsPanel({
     // clamp to how far it can actually go. The last lines then simply light up
     // lower down the panel instead of the list trying to move.
     const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
-    const target = Math.min(maxScroll, Math.max(0, refs.rowEl.offsetTop - container.clientHeight * anchorFraction))
+    const fullTarget = Math.min(maxScroll, Math.max(0, refs.rowEl.offsetTop - container.clientHeight * anchorFraction))
     const before = container.scrollTop
+    const target = before + (fullTarget - before) * distanceFraction
     if (Math.abs(target - before) < 1) return
     if (instant || Math.abs(target - before) > container.clientHeight * 1.5) {
       container.scrollTop = target
@@ -628,6 +656,14 @@ export default function LyricsPanel({
       rowEl.style.transform = ''
     })
   }, [focusIdx, anchorFraction])
+
+  // When a focused three-dot break collapses, its height changes throughout a
+  // CSS transition. Re-align after that final layout shift so the next lyric
+  // line doesn't get clipped at the top of the scroll viewport.
+  const handleGapCollapse = useCallback(() => {
+    if (focusIdx < 0 || browsing) return
+    scrollToFocus(true, 0.75)
+  }, [focusIdx, browsing, scrollToFocus])
 
   useLayoutEffect(() => {
     if (focusIdx < 0 || browsing) return
@@ -678,7 +714,7 @@ export default function LyricsPanel({
   const sourceLabel = sources.find(s => s.id === result?.source)?.label || result?.source
   const attribution = result?.attribution
   const hasContributors = !!(attribution?.uploader || attribution?.maker)
-  const showToolbar = lines.length > 0
+  const showToolbar = !hideToolbar && lines.length > 0
 
   return (
     <div className="relative w-full h-full">
@@ -698,7 +734,7 @@ export default function LyricsPanel({
               Translate
             </Pill>
             {canRomanize && (
-              <Pill active={subline === 'romanization'} onClick={() => toggleSub('romanization')} title="Show pronunciation in Latin letters">
+              <Pill active={subline === 'romanization'} onClick={() => toggleSub('romanization')} title={t("Show pronunciation in Latin letters")}>
                 {romanizationBusy ? <Loader2 size={11} className="animate-spin" /> : <span className="font-semibold leading-none">Aa</span>}
                 Romanize
               </Pill>
@@ -749,8 +785,8 @@ export default function LyricsPanel({
           // The sidebar has no empty space after the last line, so its closing
           // lines light up near the bottom edge -- keep the fade there short
           // enough not to dim them.
-          maskImage: `linear-gradient(to bottom, transparent 0, black 9%, black ${fullscreen ? 82 : 94}%, transparent 100%)`,
-          WebkitMaskImage: `linear-gradient(to bottom, transparent 0, black 9%, black ${fullscreen ? 82 : 94}%, transparent 100%)`,
+          maskImage: compact ? 'linear-gradient(to bottom, black 0, black 94%, transparent 100%)' : `linear-gradient(to bottom, transparent 0, black 9%, black ${fullscreen ? 82 : 94}%, transparent 100%)`,
+          WebkitMaskImage: compact ? 'linear-gradient(to bottom, black 0, black 94%, transparent 100%)' : `linear-gradient(to bottom, transparent 0, black 9%, black ${fullscreen ? 82 : 94}%, transparent 100%)`,
         }}
       >
         <div className={`w-full ${fullscreen ? 'max-w-3xl mx-auto px-6' : 'px-3'}`}>
@@ -761,12 +797,12 @@ export default function LyricsPanel({
             <div className="h-full min-h-[240px] flex flex-col items-center justify-center gap-3 text-white/35 select-none pt-24">
               <Mic2 size={fullscreen ? 40 : 28} />
               {result?.instrumental ? (
-                <p className={fullscreen ? 'text-sm' : 'text-xs'}>Instrumental — nothing to sing along to.</p>
+                <p className={fullscreen ? 'text-sm' : 'text-xs'}>{t("Instrumental — nothing to sing along to.")}</p>
               ) : !isOnline ? (
-                <p className={fullscreen ? 'text-sm' : 'text-xs'}>You're offline. Lyrics will load once you're back online.</p>
+                <p className={fullscreen ? 'text-sm' : 'text-xs'}>{t("You're offline. Lyrics will load once you're back online.")}</p>
               ) : (
                 <>
-                  <p className={fullscreen ? 'text-sm' : 'text-xs'}>No lyrics found</p>
+                  <p className={fullscreen ? 'text-sm' : 'text-xs'}>{t("No lyrics found")}</p>
                   <div className="flex items-center gap-3">
                     <button onClick={requestSearch} className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 transition-colors">
                       <Search size={12} /> Search manually
@@ -782,7 +818,7 @@ export default function LyricsPanel({
 
           {!loading && lines.length > 0 && (
             <>
-              <div style={fullscreen ? FULLSCREEN_TOP : { height: synced || isAutoSynced ? `${anchorFraction * 100}%` : '3.5rem', minHeight: synced ? '5rem' : undefined }} />
+              <div style={fullscreen ? FULLSCREEN_TOP : compact ? { height: '1rem' } : { height: synced || isAutoSynced ? `${anchorFraction * 100}%` : '3.5rem', minHeight: synced ? '5rem' : undefined }} />
               {!synced && (
                 <p className="px-3 pb-3 text-[11px] text-white/35">These lyrics aren't time-synced{isAutoSynced ? ' — following along roughly' : ''}.</p>
               )}
@@ -805,9 +841,10 @@ export default function LyricsPanel({
                   sub={subLines?.[i] || null}
                   onSeek={seek}
                   registerRow={registerRow}
+                  onGapCollapse={line.gap ? handleGapCollapse : undefined}
                 />
               ))}
-              <div style={{ height: fullscreen ? '55vh' : 0 }} />
+              <div style={{ height: fullscreen ? '55vh' : compact ? '240px' : 0 }} />
               {sourceLabel && (
                 <p className="px-3 pb-10 text-[11px] text-white/30">
                   Lyrics via {sourceLabel}{result?.sync ? ` · ${SYNC_LABEL[result.sync] || ''}` : ''}

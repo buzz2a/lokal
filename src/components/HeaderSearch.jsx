@@ -28,6 +28,7 @@ import {
 } from '../searchHistory'
 import { asLink } from '../downloadLinks'
 import CastButton from './CastButton'
+import PhoneRemoteButton from './PhoneRemoteButton'
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '')
 
@@ -47,6 +48,7 @@ function appInFront() {
 
 /** The typed text with the part matching `typed` emphasised. */
 function Highlighted({ text, typed }) {
+  const { t } = useTranslation()
   const q = typed.trim().toLowerCase()
   const at = q ? text.toLowerCase().indexOf(q) : -1
   if (at < 0) return <span className="text-text/80">{text}</span>
@@ -325,6 +327,7 @@ export default function HeaderSearch() {
       </div>
 
       <CastButton />
+      <PhoneRemoteButton />
     </div>
   )
 }

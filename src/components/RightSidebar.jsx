@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Music, Maximize2, Mic2, Disc3, Radio, Clapperboard, Gem, ImageOff, ImagePlay } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -19,7 +19,9 @@ import {
   navigateToContext,
   navigateToTrackAlbum,
 } from '../playbackContext'
-import { navigateToTrackArtist } from '../artistLink'
+import TrackArtistLinks from './TrackArtistLinks'
+import { cacheLyrics, peekLyrics, hasLyricLines } from '../lyrics/lyricsCache'
+import { isOnlineTrack } from '../onlineBrowse'
 import { isStreamed, trackArtURL } from '../onlineTracks'
 
 import ContextMenu, { useContextMenu } from './ContextMenu'
@@ -32,6 +34,7 @@ import { losslessMenuItem } from '../quality'
 const isPlaceholderGenre = genre => !String(genre || '').trim() || String(genre).trim().toLowerCase() === 'music'
 
 function InfoRow({ label, value, onClick = null, title = null, fx = true }) {
+  const { t } = useTranslation()
   if (!value) return null
   return (
     <div className={`flex items-start gap-3 py-1.5 border-b last:border-0 ${fx ? 'border-white/10' : 'border-border/30'}`}>
@@ -123,16 +126,21 @@ export default function RightSidebar() {
   // localStorage key here that's never written left this permanently false
   // regardless of the actual saved choice. RightSidebar stays mounted for
   // the whole session, so a mount-once fetch would go stale the same way
-  // FullscreenPlayer/LyricsFullscreen's did -- refetch whenever the Lyrics
-  // overlay is opened so a change made in Settings takes effect right away.
+  // FullscreenPlayer/LyricsFullscreen's did -- refetch whenever the full Lyrics
+  // overlay or compact lyrics card is opened so settings changes take effect.
   const [settings, setSettings] = useState({})
+  // The cover's Lyrics button swaps only the lower metadata card; it must not
+  // open the full-height Lyrics overlay controlled by sidePanelView.
+  const [infoCardView, setInfoCardView] = useState('info')
+  const autoSelectLyricsRef = useRef(null)
+  useEffect(() => setInfoCardView('info'), [currentTrack?.id])
   // Guards against an in-flight getSettings() from an earlier call
   // resolving AFTER a later one (e.g. the Lyrics panel is reopened, or
   // 'lokal:settings-saved' fires again, while the first request is still
   // pending) and overwriting the newer settings with stale ones.
   const settingsSeqRef = useRef(0)
   useEffect(() => {
-    if (sidePanelView !== 'lyrics') return
+    if (sidePanelView !== 'lyrics' && infoCardView !== 'lyrics') return
     const loadSettings = () => {
       const seq = ++settingsSeqRef.current
       api.getSettings()
@@ -145,8 +153,51 @@ export default function RightSidebar() {
     // the effect above wouldn't otherwise refire.
     window.addEventListener('lokal:settings-saved', loadSettings)
     return () => window.removeEventListener('lokal:settings-saved', loadSettings)
-  }, [sidePanelView])
+  }, [sidePanelView, infoCardView])
   const isAutoSynced = settings.unsynced_auto_sync === '1'
+
+  // The cover's top-left corner shows a Lyrics button when the song has
+  // lyrics: looked up the first time the pointer gets there (or already
+  // known from the lyrics cache), never for every song that plays.
+  const [lyricsLookup, setLyricsLookup] = useState({ trackId: null, has: false })
+  const cachedLyrics = currentTrack?.id ? peekLyrics(currentTrack.id) : undefined
+  const songHasLyrics = cachedLyrics !== undefined ? hasLyricLines(cachedLyrics) : lyricsLookup.trackId === currentTrack?.id && lyricsLookup.has
+  const lookUpLyrics = useCallback((track = currentTrack, autoSelect = false) => {
+    if (!track?.id) return Promise.resolve(null)
+    if (autoSelect) autoSelectLyricsRef.current = track.id
+    const cached = peekLyrics(track.id)
+    if (cached !== undefined) {
+      const has = hasLyricLines(cached)
+      setLyricsLookup({ trackId: track.id, has })
+      if ((autoSelect || autoSelectLyricsRef.current === track.id) && has && usePlayerStore.getState().currentTrack?.id === track.id) setInfoCardView('lyrics')
+      if (autoSelectLyricsRef.current === track.id) autoSelectLyricsRef.current = null
+      return Promise.resolve(cached)
+    }
+    if (lyricsLookup.trackId === track.id) return Promise.resolve(null)
+    setLyricsLookup({ trackId: track.id, has: false })
+    return Promise.resolve(api.getLyrics(track.id, track.title, track.artist, track.album, track.duration, track.file_path))
+      .then(r => {
+        const result = r && (r.lines?.length || r.instrumental) ? r : null
+        cacheLyrics(track.id, result)
+        const has = hasLyricLines(result)
+        setLyricsLookup(known => known.trackId === track.id ? { trackId: track.id, has } : known)
+        // Select the lyrics card only if this is still the track being played.
+        if ((autoSelect || autoSelectLyricsRef.current === track.id) && has && usePlayerStore.getState().currentTrack?.id === track.id) setInfoCardView('lyrics')
+        if (autoSelectLyricsRef.current === track.id) autoSelectLyricsRef.current = null
+        return result
+      })
+      .catch(() => {
+        if (autoSelectLyricsRef.current === track.id) autoSelectLyricsRef.current = null
+        return null
+      })
+  }, [currentTrack, lyricsLookup.trackId])
+
+  // Lyrics are the default lower card whenever the current track has them.
+  // Look up on track changes so users do not need to reveal the cover button
+  // and click it again for every song. Tracks without lyrics keep their details.
+  useEffect(() => {
+    if (currentTrack?.id) void lookUpLyrics(currentTrack, true)
+  }, [currentTrack?.id, lookUpLyrics])
 
   // Comma-preserving artist names (e.g. "Tyler, The Creator") configured in
   // Settings -- without this, navigateToTrackArtist falls back to its
@@ -279,6 +330,7 @@ export default function RightSidebar() {
       )}
     </div>
   ) : null
+  const hasAlbumLink = !!currentTrack?.album || (isStreamed(currentTrack) && !!(currentTrack?.source_album_id || currentTrack?.sourceAlbumId || currentTrack?.albumId))
 
   return (
     <>
@@ -318,7 +370,7 @@ export default function RightSidebar() {
             <div className="flex gap-0.5 p-0.5 bg-card rounded-lg border border-border/50">
               {[['info', 'Details'], ['lyrics', 'Lyrics'], ['queue', 'Queue']].map(([id, label]) => (
                 <button key={id} onClick={() => (id === 'queue' ? (tab === 'queue' ? null : toggleQueueButton()) : setSidePanelView(id))} aria-pressed={tab === id} className={`px-3 py-1 text-xs font-display uppercase tracking-wider rounded transition-colors ${tab === id ? 'bg-accent text-base' : 'text-muted hover:text-white'}`}>
-                  {label}
+                  {t(label)}
                 </button>
               ))}
             </div>
@@ -367,6 +419,21 @@ export default function RightSidebar() {
                     <div className={`absolute inset-0 flex items-center justify-center ${fx ? 'text-white/25' : 'text-subtle'}`}><Music size={52} /></div>
                   )}
                   {burst && burst.trackId === currentTrack?.id && <LikeBurst key={burst.id} kind={burst.kind} />}
+                  {currentTrack && (
+                    <div className="group/lyrics absolute left-0 top-0 z-10 h-1/3 w-1/2 p-2" onMouseEnter={() => lookUpLyrics()} onDoubleClick={e => e.stopPropagation()}>
+                      {songHasLyrics && (
+                        <button
+                          type="button"
+                          onClick={() => setInfoCardView(view => view === 'lyrics' ? 'info' : 'lyrics')}
+                          aria-label={t(infoCardView === 'lyrics' ? 'Show details' : 'Show lyrics')}
+                          aria-pressed={infoCardView === 'lyrics'}
+                          title={t(infoCardView === 'lyrics' ? 'Show details' : 'Show lyrics')}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full opacity-0 backdrop-blur-sm transition-opacity focus-visible:opacity-100 group-hover/lyrics:opacity-100 ${infoCardView === 'lyrics' ? 'bg-white/85 text-black hover:bg-white' : 'bg-black/55 text-white hover:bg-black/70'}`}>
+                          <Mic2 size={15} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
 
                 <div className={fx ? 'relative -mt-16 px-4 pb-4 space-y-4' : 'mt-4 space-y-4'}>
@@ -374,11 +441,11 @@ export default function RightSidebar() {
 
                   {/* In at once, fading: never waiting on the old title's way out (see PlayerBar). */}
                     <motion.div key={currentTrack?.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-                      {currentTrack?.album ? (
+                      {currentTrack?.album || (isOnlineTrack(currentTrack) && (currentTrack?.source_album_id || currentTrack?.sourceAlbumId || currentTrack?.albumId)) ? (
                         <button
                           onClick={() => navigateToTrackAlbum(nav, currentTrack)}
                           onContextMenu={openTrackMenu}
-                          title={`Go to album: ${currentTrack.album}`}
+                          title={currentTrack.album ? t('Go to album: {album}', { album: currentTrack.album }) : t('Go to album')}
                           className={fx ? 'text-lg font-semibold text-white leading-tight text-left hover:underline transition-colors max-w-full block drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)]' : 'font-display text-white text-sm leading-tight text-left hover:text-accent hover:underline transition-colors truncate max-w-full block'}>
                           {currentTrack?.title || 'Nothing playing'}
                         </button>
@@ -386,13 +453,13 @@ export default function RightSidebar() {
                         <p onContextMenu={openTrackMenu} className={fx ? 'text-lg font-semibold text-white leading-tight drop-shadow-[0_1px_8px_rgba(0,0,0,0.45)]' : 'font-display text-white text-sm leading-tight'}>{currentTrack?.title || 'Nothing playing'}</p>
                       )}
                       {currentTrack?.artist ? (
-                        <button
-                          onClick={() => navigateToTrackArtist(nav, currentTrack, keepCommaArtists)}
+                        <TrackArtistLinks
+                          track={currentTrack}
+                          nav={nav}
+                          keepCommaArtists={keepCommaArtists}
                           onContextMenu={openTrackMenu}
-                          title={`Go to artist: ${currentTrack.artist}`}
-                          className={fx ? 'text-sm text-white/70 mt-0.5 text-left hover:text-white hover:underline transition-colors truncate max-w-full block' : 'text-xs text-muted mt-0.5 text-left hover:text-accent hover:underline transition-colors truncate max-w-full block'}>
-                          {currentTrack.artist}
-                        </button>
+                          className={fx ? 'text-sm text-white/70 mt-0.5 text-left max-w-full block' : 'text-xs text-muted mt-0.5 text-left truncate max-w-full block'}
+                          linkClassName={fx ? 'text-left hover:text-white hover:underline transition-colors' : 'text-left hover:text-accent hover:underline transition-colors'} />
                       ) : (
                         <p className={fx ? 'text-sm text-white/70 mt-0.5' : 'text-xs text-muted mt-0.5'}>{currentTrack?.artist}</p>
                       )}
@@ -427,23 +494,29 @@ export default function RightSidebar() {
                   })()}
 
                   {currentTrack && (
+                    infoCardView === 'lyrics' ? (
+                      <div className={`relative h-[420px] min-h-[320px] overflow-hidden rounded-xl border ${fx ? 'border-white/10 bg-black/25' : 'border-border bg-card'}`}>
+                        <LyricsPanel track={currentTrack} progress={progress} wordSync={wordSync} fullscreen={false} textScale={1.4} isAutoSynced={isAutoSynced} hideToolbar compact />
+                      </div>
+                    ) : (
                     <div className={fx ? 'bg-black/25 rounded-xl border border-white/10 px-4 py-1' : 'bg-card rounded-xl border border-border px-4 py-1'}>
                       <InfoRow
                         fx={fx}
-                        label="Album"
-                        value={currentTrack.album}
-                        title={currentTrack.album ? `Go to album: ${currentTrack.album}` : null}
-                        onClick={currentTrack.album ? () => navigateToTrackAlbum(nav, currentTrack) : null}
+                        label={t("Album")}
+                        value={currentTrack.album || (hasAlbumLink ? t('Album · Online') : null)}
+                        title={hasAlbumLink ? t('Go to album: {album}', { album: currentTrack.album || t('Album · Online') }) : null}
+                        onClick={hasAlbumLink ? () => navigateToTrackAlbum(nav, currentTrack) : null}
                       />
-                      {currentTrack.album_artist && currentTrack.album_artist !== currentTrack.artist && <InfoRow fx={fx} label="Alb. Artist" value={currentTrack.album_artist} />}
-                      <InfoRow fx={fx} label="Year" value={currentTrack.year} />
-                      <InfoRow fx={fx} label="Genre" value={genre} />
-                      <InfoRow fx={fx} label="Track #" value={currentTrack.track_num ? `${currentTrack.track_num}` : null} />
-                      <InfoRow fx={fx} label="Bitrate" value={currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null} />
+                      {currentTrack.album_artist && currentTrack.album_artist !== currentTrack.artist && <InfoRow fx={fx} label={t("Alb. Artist")} value={currentTrack.album_artist} />}
+                      <InfoRow fx={fx} label={t("Year")} value={currentTrack.year} />
+                      <InfoRow fx={fx} label={t("Genre")} value={genre} />
+                      <InfoRow fx={fx} label={t("Track #")} value={currentTrack.track_num ? `${currentTrack.track_num}` : null} />
+                      <InfoRow fx={fx} label={t("Bitrate")} value={currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null} />
                       {/* A stream (an addon's) has no file to measure: what the source says of it. */}
-                      {!currentTrack.bitrate && <InfoRow fx={fx} label="Quality" value={streamQualityLabel(currentTrack)} />}
-                      <InfoRow fx={fx} label="Plays" value={plays > 0 ? plays.toLocaleString() : null} />
+                      {!currentTrack.bitrate && <InfoRow fx={fx} label={t("Quality")} value={streamQualityLabel(currentTrack)} />}
+                      <InfoRow fx={fx} label={t("Plays")} value={plays > 0 ? plays.toLocaleString() : null} />
                     </div>
+                    )
                   )}
                 </div>
               </div>
@@ -469,12 +542,12 @@ export default function RightSidebar() {
                     {currentTrack ? (
                       <LyricsPanel track={currentTrack} progress={progress} darkMode wordSync={wordSync} fullscreen={false} textScale={1.4} isAutoSynced={isAutoSynced} />
                     ) : (
-                      <div className="flex items-center justify-center h-full text-muted text-xs">No track playing</div>
+                      <div className="flex items-center justify-center h-full text-muted text-xs">{t("No track playing")}</div>
                     )}
                   </div>
                   <div className="p-3 border-t border-border flex-shrink-0">
                     <button onClick={toggleLyricsFullscreen} className="w-full py-2 bg-card border border-border rounded-xl text-xs text-muted hover:text-white hover:border-accent/30 transition-all font-display uppercase tracking-wider flex items-center justify-center gap-1.5">
-                      <Maximize2 size={11} /> Expand Lyrics
+                      <Maximize2 size={11} /> {t('Expand Lyrics')}
                     </button>
                   </div>
                 </motion.div>

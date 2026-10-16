@@ -285,6 +285,7 @@ export const api = {
     ? el().artistApplyMetadataSelection(id, selection, mode)
     : apiFetch(`/artists/${id}/metadata-selection`, { method:'POST', body:{ selection, mode } }),
   artistClearImageOverride: (id) => isE() ? el().artistClearImageOverride(id) : apiFetch(`/artists/${id}/image/fallback`, { method:'POST' }),
+  artistsForTrack: (trackId) => isE() ? el().artistsForTrack(trackId) : apiFetch(`/artists/for-track/${encodeURIComponent(trackId)}`),
   artistRename: (id, n) => isE() ? el().artistRename(id, n) : apiFetch(`/artists/${id}/rename`, { method:'PUT', body:{name:n} }),
   artistMerge: (s, t) => isE() ? el().artistMerge(s, t) : apiFetch('/artists/merge', { method:'POST', body:{sourceId:s,targetId:t} }),
   artistDelete: (id) => isE() ? el().artistDelete(id) : apiFetch(`/artists/${id}`, { method:'DELETE' }),
@@ -658,6 +659,8 @@ export const api = {
   openLogs: () => isE() ? el().openLogs() : Promise.resolve(),
   log: (level, message) => isE() ? el().log(level, message) : console.log(`[${level}] ${message}`),
   getPerfSettings: () => isE() ? el().getPerfSettings() : Promise.resolve({ hardwareAcceleration: true, performanceMode: false }),
+  getRemoteConnectionInfo: () => isE() && el()?.getRemoteConnectionInfo ? el().getRemoteConnectionInfo() : Promise.resolve({ error: 'Electron only' }),
+  openExternal: (url) => isE() && el()?.openExternal ? el().openExternal(url) : Promise.resolve(),
   savePerfSettings: (s) => isE() ? el().savePerfSettings(s) : Promise.resolve({}),
   setMediaKeyPreference: (enabled) => (isE() && typeof el().setMediaKeyPreference === 'function') ? el().setMediaKeyPreference(enabled) : Promise.resolve({ ok: false, enabled: false }),
   relaunchApp: () => isE() ? el().relaunchApp() : Promise.resolve(),

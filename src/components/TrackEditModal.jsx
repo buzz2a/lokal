@@ -1,3 +1,4 @@
+import { useTranslation } from '../i18n'
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Camera, Save, RefreshCw, Check, AlertCircle, Lock, Unlock, Sparkles } from 'lucide-react'
@@ -68,6 +69,7 @@ function parseNumberField(value) {
  * @param onFixOnline  opens Fix Metadata for the song (online lookups); no button without it
  */
 export default function TrackEditModal({ track, open, onClose, onSave, onFixOnline = null }) {
+  const { t } = useTranslation()
   const syncTrack = usePlayerStore(s => s.syncTrack)
   const [formData, setFormData] = useState({
     title: '',
@@ -277,13 +279,13 @@ export default function TrackEditModal({ track, open, onClose, onSave, onFixOnli
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Edit Track" width="max-w-3xl">
+    <Modal open={open} onClose={onClose} title={t("Edit Track")} width="max-w-3xl">
       <div className="space-y-4">
         <div className="flex gap-4">
           <div className="flex-shrink-0">
             <div className="w-32 h-32 rounded-lg overflow-hidden bg-card border border-border relative group">
               {artworkPreview ? (
-                <img src={artworkPreview} alt="Artwork" className="w-full h-full object-cover" />
+                <img src={artworkPreview} alt={t("Artwork")} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-muted">
                   <Camera size={32} />
@@ -309,50 +311,50 @@ export default function TrackEditModal({ track, open, onClose, onSave, onFixOnli
           
           <div className="flex-1 space-y-3">
             <div>
-              {fieldLabel('Title', 'title')}
+              {fieldLabel(t('Title'), 'title')}
               <input 
                 value={formData.title}
                 onChange={(e) => handleChange('title', e.target.value)}
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
-                placeholder="Track title"
+                placeholder={t("Track title")}
               />
             </div>
             
             <div>
-              {fieldLabel('Artist', 'artist')}
+              {fieldLabel(t('Artist'), 'artist')}
               <input 
                 value={formData.artist}
                 onChange={(e) => handleChange('artist', e.target.value)}
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
-                placeholder="Artist name"
+                placeholder={t("Artist name")}
               />
             </div>
           </div>
         </div>
 
         <div>
-          {fieldLabel('Album', 'album')}
+          {fieldLabel(t('Album'), 'album')}
           <input 
             value={formData.album}
             onChange={(e) => handleChange('album', e.target.value)}
             className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
-            placeholder="Album name"
+            placeholder={t("Album name")}
           />
         </div>
 
         <div>
-          {fieldLabel('Album Artist', 'album_artist')}
+          {fieldLabel(t('Album Artist'), 'album_artist')}
           <input 
             value={formData.album_artist}
             onChange={(e) => handleChange('album_artist', e.target.value)}
             className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
-            placeholder="Album artist (if different)"
+            placeholder={t("Album artist (if different)")}
           />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <div>
-            {fieldLabel('Track #', 'track_num')}
+            {fieldLabel(t('Track #'), 'track_num')}
             <input 
               type="number"
               min="1"
@@ -363,7 +365,7 @@ export default function TrackEditModal({ track, open, onClose, onSave, onFixOnli
             />
           </div>
           <div>
-            {fieldLabel('Year', 'year')}
+            {fieldLabel(t('Year'), 'year')}
             <input 
               type="number"
               min="1900"
@@ -375,36 +377,36 @@ export default function TrackEditModal({ track, open, onClose, onSave, onFixOnli
             />
           </div>
           <div>
-            {fieldLabel('Genre', 'genre')}
+            {fieldLabel(t('Genre'), 'genre')}
             <GenreValueInput
               value={formData.genre}
               onChange={(value) => handleChange('genre', value)}
               suggestions={genreOptions}
               listId="track-edit-genre-options"
-              placeholder="Rock"
+              placeholder={t("Rock")}
             />
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            {fieldLabel('Genres', 'genres')}
+            {fieldLabel(t('Genres'), 'genres')}
             <GenreValueInput
               value={formData.genres}
               onChange={(value) => handleChange('genres', value)}
               suggestions={genreOptions}
               listId="track-edit-genres-options"
               multi
-              placeholder="slowcore, shoegaze"
+              placeholder={t("slowcore, shoegaze")}
             />
           </div>
           <div>
-            {fieldLabel('Record Label', 'record_label')}
+            {fieldLabel(t('Record Label'), 'record_label')}
             <input
               value={formData.record_label}
               onChange={(e) => handleChange('record_label', e.target.value)}
               className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
-              placeholder="Label"
+              placeholder={t("Label")}
             />
           </div>
         </div>
@@ -418,76 +420,76 @@ export default function TrackEditModal({ track, open, onClose, onSave, onFixOnli
               className="rounded border-border bg-card text-accent focus:ring-accent/40"
             />
             <div>
-              <p className="text-sm text-white">Explicit</p>
-              <p className="text-xs text-muted">Show the track with the explicit badge.</p>
+              <p className="text-sm text-white">{t("Explicit")}</p>
+              <p className="text-xs text-muted">{t("Show the track with the explicit badge.")}</p>
             </div>
           </label>
           <div className="rounded-xl border border-border bg-card px-3 py-3">
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-2">Instrumental</label>
+            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-2">{t("Instrumental")}</label>
             <select
               value={formData.instrumental}
               onChange={(e) => handleChange('instrumental', e.target.value)}
               className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
             >
-              <option value="">Unknown</option>
-              <option value="1">Instrumental</option>
-              <option value="0">Has vocals</option>
+              <option value="">{t("Unknown")}</option>
+              <option value="1">{t("Instrumental")}</option>
+              <option value="0">{t("Has vocals")}</option>
             </select>
-            <p className="text-xs text-muted mt-2">Instrumental tracks skip LRCLIB and lyrics lookups.</p>
+            <p className="text-xs text-muted mt-2">{t("Instrumental tracks skip LRCLIB and lyrics lookups.")}</p>
           </div>
         </div>
 
         <div className="rounded-2xl border border-border bg-card/70 p-4 space-y-3">
           <div>
-            <p className="text-xs font-display text-muted uppercase tracking-widest">Imported Audio Data</p>
+            <p className="text-xs font-display text-muted uppercase tracking-widest">{t("Imported Audio Data")}</p>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Danceability</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Danceability")}</label>
               <input value={formData.danceability} onChange={(e) => handleChange('danceability', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.522" />
             </div>
             <div>
-              {fieldLabel('Energy', 'energy', true)}
+              {fieldLabel(t('Energy'), 'energy', true)}
               <input value={formData.energy} onChange={(e) => handleChange('energy', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.992" />
             </div>
             <div>
-              {fieldLabel(keyLabel(formData.track_key, formData.mode) ? `Key · ${keyLabel(formData.track_key, formData.mode)}` : 'Key', 'track_key', true)}
+              {fieldLabel(keyLabel(formData.track_key, formData.mode) ? `${t('Key')} · ${keyLabel(formData.track_key, formData.mode)}` : t('Key'), 'track_key', true)}
               <input value={formData.track_key} onChange={(e) => handleChange('track_key', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Loudness</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Loudness")}</label>
               <input value={formData.loudness} onChange={(e) => handleChange('loudness', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="-3.076" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Mode</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Mode")}</label>
               <input value={formData.mode} onChange={(e) => handleChange('mode', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="1" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Speechiness</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Speechiness")}</label>
               <input value={formData.speechiness} onChange={(e) => handleChange('speechiness', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.173" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Acousticness</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Acousticness")}</label>
               <input value={formData.acousticness} onChange={(e) => handleChange('acousticness', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.0631" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Instrumentalness</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Instrumentalness")}</label>
               <input value={formData.instrumentalness} onChange={(e) => handleChange('instrumentalness', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.743" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Liveness</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Liveness")}</label>
               <input value={formData.liveness} onChange={(e) => handleChange('liveness', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.0724" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Valence</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Valence")}</label>
               <input value={formData.valence} onChange={(e) => handleChange('valence', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.701" />
             </div>
             <div>
-              {fieldLabel('Tempo', 'tempo', true)}
+              {fieldLabel(t('Tempo'), 'tempo', true)}
               <input value={formData.tempo} onChange={(e) => handleChange('tempo', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="73.528" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Time Signature</label>
+              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">{t("Time Signature")}</label>
               <input value={formData.time_signature} onChange={(e) => handleChange('time_signature', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="4" />
             </div>
           </div>

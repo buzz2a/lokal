@@ -1,5 +1,5 @@
 const { registerNativeOutput, closeNativeOutput } = require('./audio/output')
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, screen, protocol, net, powerSaveBlocker } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, globalShortcut, screen, protocol, net, powerSaveBlocker, Tray, Menu, nativeImage } = require('electron')
 const path = require('path')
 // Keep the renderer at normal priority on Windows while minimized so the
 // AudioWorklet/native output path is not starved by backgrounding.
@@ -36,7 +36,7 @@ const { initPlugins, registerPluginHandlers } = require('./ipc/plugins')
 const { registerRecapHandlers } = require('./ipc/recaps')
 const { registerLibraryKeysHandlers } = require('./ipc/libraryKeys')
 const { registerQualityHandlers } = require('./ipc/quality')
-const { setRemoteState, setRemoteCommandHandler } = require('./ipc/remote')
+const { setRemoteState, setRemoteCommandHandler, getRemoteConnectionInfo } = require('./ipc/remote')
 const { updateThumbarButtons, registerThumbarHandlers } = require('./ipc/thumbar')
 const { registerSmtcHandlers, updateSmtcState, stopSmtcBridge } = require('./ipc/smtc')
 const { registerOnlineHandlers, registerStreamScheme, registerStreamProtocol } = require('./ipc/online')
@@ -304,6 +304,68 @@ function loadWindowState() {
   } catch { return null }
 }
 
+function closesToTray() {
+  try {
+    return getDB().prepare("SELECT value FROM settings WHERE key = 'close_to_tray'").get()?.value === '1'
+  } catch {
+    return false
+  }
+}
+
+// Settings > About > "Close to Tray": the close button hides the window
+// (its taskbar icon goes too) and leaves this tray icon to bring it back.
+let tray = null
+function showFromTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return createWindow()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+function loadTrayIcon() {
+  const filenames = process.platform === 'win32'
+    ? ['lokal-icon.ico', 'lokal-icon.png']
+    : ['lokal-icon.png', 'lokal-icon.ico']
+  const roots = app.isPackaged
+    ? [path.join(app.getAppPath(), 'dist'), path.join(process.resourcesPath, 'app.asar', 'dist')]
+    : [path.join(__dirname, '../public'), path.join(app.getAppPath(), 'dist')]
+
+  for (const root of roots) {
+    for (const filename of filenames) {
+      const iconPath = path.join(root, filename)
+      if (!fs.existsSync(iconPath)) continue
+      const image = nativeImage.createFromPath(iconPath)
+      if (!image.isEmpty()) return image
+    }
+  }
+  log.error('[tray] Could not load Lokal tray icon from packaged or development assets')
+  return nativeImage.createEmpty()
+}
+
+function hideToTray() {
+  if (!tray || tray.isDestroyed()) {
+    const image = loadTrayIcon()
+    if (image.isEmpty()) {
+      // Don't silently hide the only window when the tray icon could not load.
+      log.error('[tray] Refusing to hide the window without a visible tray icon')
+      return false
+    }
+    tray = new Tray(process.platform === 'win32' ? image : image.resize({ width: 16, height: 16 }))
+    tray.setToolTip('Lokal')
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Show Lokal', click: showFromTray },
+      { type: 'separator' },
+      { label: 'Quit Lokal', click: () => app.quit() },
+    ]))
+    tray.on('click', showFromTray)
+  }
+  mainWindow.hide()
+  return true
+}
+function removeTray() {
+  if (tray && !tray.isDestroyed()) tray.destroy()
+  tray = null
+}
+
 function saveWindowState() {
   if (!mainWindow || mainWindow.isDestroyed() || miniModeEnabled) return
   const bounds = validWindowBounds(typeof mainWindow.getNormalBounds === 'function' ? mainWindow.getNormalBounds() : mainWindow.getBounds())
@@ -313,6 +375,21 @@ function saveWindowState() {
     fs.writeFileSync(tmp, JSON.stringify({ bounds, maximized: mainWindow.isMaximized() }))
     fs.renameSync(tmp, windowStatePath)
   } catch {}
+}
+
+let saveWindowStateTimer = null
+function scheduleSaveWindowState() {
+  if (saveWindowStateTimer) clearTimeout(saveWindowStateTimer)
+  saveWindowStateTimer = setTimeout(() => {
+    saveWindowStateTimer = null
+    saveWindowState()
+  }, 250)
+  saveWindowStateTimer.unref?.()
+}
+function flushSaveWindowState() {
+  if (saveWindowStateTimer) clearTimeout(saveWindowStateTimer)
+  saveWindowStateTimer = null
+  saveWindowState()
 }
 
 function emitPlayerCommand(action) {
@@ -391,11 +468,19 @@ function createWindow() {
   mainWindow.on('hide', () => sendVisibility(true))
   mainWindow.on('restore', () => sendVisibility(false))
   mainWindow.on('show', () => sendVisibility(false))
-  mainWindow.on('resize', saveWindowState)
-  mainWindow.on('move', saveWindowState)
-  mainWindow.on('maximize', saveWindowState)
-  mainWindow.on('unmaximize', saveWindowState)
-  mainWindow.on('close', saveWindowState)
+  mainWindow.on('resize', scheduleSaveWindowState)
+  mainWindow.on('move', scheduleSaveWindowState)
+  mainWindow.on('maximize', scheduleSaveWindowState)
+  mainWindow.on('unmaximize', scheduleSaveWindowState)
+  // Settings > "Close to Tray": the window's close button (or Ctrl+W) hides
+  // it to the tray. Quitting (Cmd+Q, the tray menu, an update) sets
+  // `quitting` in before-quit first, so it still quits.
+  mainWindow.on('close', (event) => {
+    flushSaveWindowState()
+    if (quitting || isUpdating || !closesToTray()) return
+    if (hideToTray()) event.preventDefault()
+  })
+  mainWindow.on('show', removeTray)
   if (saved?.maximized) mainWindow.maximize()
 
   
@@ -403,7 +488,9 @@ function createWindow() {
   // Electron 35+ passes one details object (level as 'info' | 'warning' |
   // 'error' | 'debug'); the old positional arguments are gone.
   mainWindow.webContents.on('console-message', (event) => {
-    const logLevel = { debug: 'debug', info: 'info', warning: 'warn', error: 'error' }[event.level] || 'info'
+    const level = event.level
+    if (!['warning', 'error'].includes(level) && process.env.LOKAL_DEBUG_CONSOLE !== '1') return
+    const logLevel = { debug: 'debug', info: 'info', warning: 'warn', error: 'error' }[level] || 'info'
     log[logLevel](`[Renderer:${event.sourceId}:${event.lineNumber}] ${event.message}`)
   })
   
@@ -517,6 +604,8 @@ app.whenReady().then(() => {
       if (typeof newSettings?.performanceMode === 'boolean') next.performanceMode = newSettings.performanceMode
       delete next.graphicsBackend
       writePerformanceSettings(next)
+      // Performance Mode is live; hardware acceleration still takes effect on restart.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('perf-settings', next)
       return { success: true }
     } catch (e) {
       return { error: e.message }
@@ -556,6 +645,24 @@ app.whenReady().then(() => {
   ipcMain.on('remote:stateUpdate', (_, state) => {
     setRemoteState(state)
     updateSmtcState(state || {})
+  })
+  ipcMain.handle('remote:getConnectionInfo', async () => {
+    const fallback = getRemoteConnectionInfo()
+    const port = Number(process.env.PORT) || 3421
+    const headers = {}
+    const remoteToken = String(process.env.REMOTE_TOKEN || '').trim()
+    const apiKey = String(process.env.API_KEY || '').trim()
+    if (remoteToken) headers['x-remote-token'] = remoteToken
+    if (apiKey) headers['x-api-key'] = apiKey
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/remote/connection`, { headers })
+      const data = await response.json().catch(() => ({}))
+      if (response.ok) return { ...data, serverReachable: true, platform: process.platform }
+      if (data.disabled) return { ...fallback, disabled: true, serverReachable: true, platform: process.platform }
+      return { ...fallback, serverReachable: false, error: data.error || `Remote server returned HTTP ${response.status}`, platform: process.platform }
+    } catch (e) {
+      return { ...fallback, serverReachable: false, error: e?.message || 'Could not reach the remote server', platform: process.platform }
+    }
   })
   setRemoteCommandHandler(async (command) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -803,6 +910,7 @@ app.on('will-quit', () => {
 let discordCleared = false
 app.on('before-quit', (event) => {
   quitting = true
+  removeTray()
   if (isUpdating) {
     if (mainWindow) {
       mainWindow.destroy();

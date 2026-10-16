@@ -26,9 +26,12 @@ export function onlineAlbumPath({ artist, album, albumId, provider, sourceAlbumI
 export function trackAlbumPath(track) {
   const ref = streamRef(track)
   const provider = /^a-/.test(ref?.provider || '') ? ref.provider : /^a-/.test(track.provider || '') ? track.provider : null
+  const sourceAlbumId = track.source_album_id || track.sourceAlbumId || track.albumId || null
   return onlineAlbumPath({
-    artist: track.album_artist || track.artist, album: track.album, albumId: track.albumId,
-    provider, sourceAlbumId: provider && track.provider === provider ? track.albumId : null,
+    // Some add-ons (including Amazon) return the album id before its display
+    // name. The album page resolves that id and displays the add-on's title.
+    artist: track.album_artist || track.artist, album: track.album || track.album_name || track.albumName || '', albumId: track.albumId,
+    provider, sourceAlbumId: provider ? sourceAlbumId : null,
   })
 }
 
@@ -90,6 +93,23 @@ export async function loadAddonAlbum({ artist, album, provider, sourceAlbumId, a
 export async function loadAddonArtist(name, { anchor, hints = [] } = {}, client = api) {
   const want = plain(name)
   const hinted = new Set(hints.map(plain).filter(Boolean))
+  const fromResult = (result, addon) => ({
+    name: result.name || name,
+    image: result.image || '',
+    tracks: exactTracks(result.tracks),
+    albums: (result.albums || []).map(item => ({ ...item, provider: addon, sourceAlbumId: item.albumId, albumId: null })),
+  })
+
+  // An artist search result already has an exact ID from its source. Honour
+  // it before resolving by name; namesakes on YouTube or other addons must
+  // not replace the artist the user explicitly clicked.
+  if (anchor?.artistId && anchor?.provider) {
+    const direct = await timed(() => client.addonArtist(anchor.provider, anchor.artistId), 15000).catch(() => null)
+    if (direct && !direct.error && (direct.tracks?.length || direct.albums?.length)) {
+      return fromResult(direct, anchor.provider)
+    }
+  }
+
   for (const addon of await catalogueAddons('artist', client, anchor?.provider)) {
     let id = null
     if (anchor?.title) {
@@ -115,7 +135,7 @@ export async function loadAddonArtist(name, { anchor, hints = [] } = {}, client 
     if (!id) continue
     const result = await timed(() => client.addonArtist(addon, id), 15000).catch(() => null)
     if (!result || result.error || (!result.tracks?.length && !result.albums?.length)) continue
-    return { name: result.name || name, image: result.image || '', tracks: exactTracks(result.tracks), albums: result.albums.map(item => ({ ...item, provider: addon, sourceAlbumId: item.albumId, albumId: null })) }
+    return fromResult(result, addon)
   }
   return null
 }
@@ -132,12 +152,19 @@ export async function libraryAlbum({ artist, album }, client = api) {
 
 /** An album's songs, in order: { tracks, error } */
 export async function loadOnlineAlbum({ artist, album, albumId, artwork, provider, sourceAlbumId, anchor }, client = api, options = {}) {
+  // A player's direct add-on album link can have the exact source ID before
+  // the search result has a display name. Resolve that ID first so the page
+  // doesn't depend on a title-based catalogue lookup.
+  if (provider && sourceAlbumId) {
+    const fromAddon = await loadAddonAlbum({ artist, album, provider, sourceAlbumId, anchor }, client).catch(() => null)
+    if (fromAddon) return { tracks: fromAddon.tracks, error: '', provider: fromAddon.provider, artwork: fromAddon.artwork, title: fromAddon.title, artist: fromAddon.artist }
+  }
   // The catalogues first (Last.fm, YouTube Music); then an addon with album
   // pages (the whole album, in order); then a search of the playback sources.
   let result = await loadDiscoveryCatalogue({ type: 'album', artist, album, albumId }, client, { ...options, searchSources: false })
   if (!result.tracks?.length) {
     const fromAddon = await loadAddonAlbum({ artist, album, provider, sourceAlbumId, anchor }, client).catch(() => null)
-    if (fromAddon) return { tracks: fromAddon.tracks, error: '', provider: fromAddon.provider, artwork: fromAddon.artwork }
+    if (fromAddon) return { tracks: fromAddon.tracks, error: '', provider: fromAddon.provider, artwork: fromAddon.artwork, title: fromAddon.title, artist: fromAddon.artist }
     result = await loadDiscoveryCatalogue({ type: 'album', artist, album, albumId }, client, { ...options, skipSources: ['lastfm', 'youtube'] })
   }
   // Songs without their own cover show the album's.
@@ -283,6 +310,7 @@ function cacheEntries() {
       if (entry && Date.now() - entry.at < CACHE_TTL_MS) memory.set(key, entry)
     }
   } catch {}
+  while (memory.size > CACHE_MAX) memory.delete(memory.keys().next().value)
   return memory
 }
 
@@ -295,12 +323,28 @@ const cacheKeyOf = (kind, parts) => `${kind}:${parts.map(part => recommendationK
 /** The key an online album is cached under. */
 export const albumCacheKey = ({ artist, album, albumId, provider, sourceAlbumId } = {}) => cacheKeyOf('album', [artist, album, albumId, provider, sourceAlbumId])
 /** The key an online artist is cached under. */
-export const artistCacheKey = name => cacheKeyOf('artist', [name])
+export const artistCacheKey = (name, anchor = null) => {
+  const normalizedName = recommendationKey(name) || String(name || '')
+  // Provider artist IDs are opaque identifiers, not names. Preserve their
+  // exact spelling and case so distinct IDs cannot share a profile cache entry.
+  if (anchor?.artistId != null && anchor?.provider) {
+    return JSON.stringify(['artist-source', normalizedName, String(anchor.provider), String(anchor.artistId)])
+  }
+  return cacheKeyOf('artist', [name])
+}
 
 /** What's cached under `key` (and when), or null. */
 export function peekOnline(key) {
-  const entry = cacheEntries().get(key)
-  if (!entry || Date.now() - entry.at >= CACHE_TTL_MS) return null
+  const entries = cacheEntries()
+  const entry = entries.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.at >= CACHE_TTL_MS) {
+    entries.delete(key)
+    return null
+  }
+  // Touch the entry so eviction remains least-recently-used.
+  entries.delete(key)
+  entries.set(key, entry)
   return entry
 }
 
