@@ -9,6 +9,15 @@ const isE = () => {
   return false
 }
 const el = () => window.electron
+
+// A desktop call added in an update: when the app's main process predates
+// it (the page was reloaded, the app wasn't restarted), say so instead of
+// failing silently.
+const RESTART_NEEDED = 'Restart Lokal to finish updating: this feature needs the app restarted.'
+const desktopCall = (name, ...args) => {
+  const fn = el()?.[name]
+  return typeof fn === 'function' ? Promise.resolve(fn(...args)) : Promise.reject(new Error(RESTART_NEEDED))
+}
 const BASE = '/api'
 const YOUTUBE_LOCAL_UNLIKES_KEY = 'lokal-youtube-local-unlikes'
 
@@ -610,13 +619,13 @@ export const api = {
   beatportPlaylists: ({ page = 1 } = {}) => isE() ? el().beatportPlaylists({ page }) : apiFetch(`/beatport/playlists?page=${encodeURIComponent(page)}`),
   beatportPlaylist: (id) => isE() ? el().beatportPlaylist(id) : apiFetch(`/beatport/playlists/${encodeURIComponent(id)}`),
   // Fix Metadata (electron/metadata): online lookups, apply/undo, sources and locks.
-  metadataProviders: () => isE() ? el().metadataProviders() : apiFetch('/metadata/providers'),
-  metadataLookupTrack: (trackId, options = {}) => isE() ? el().metadataLookupTrack(trackId, options) : apiFetch('/metadata/lookup-track', { method: 'POST', body: { trackId, ...options } }),
-  metadataLookupAlbum: (trackIds, options = {}) => isE() ? el().metadataLookupAlbum(trackIds, options) : apiFetch('/metadata/lookup-album', { method: 'POST', body: { trackIds, ...options } }),
-  metadataApply: (changes) => isE() ? el().metadataApply(changes) : apiFetch('/metadata/apply', { method: 'POST', body: { changes } }),
-  metadataUndo: (batchId) => isE() ? el().metadataUndo(batchId) : apiFetch('/metadata/undo', { method: 'POST', body: { batchId } }),
-  metadataProvenance: (trackId) => isE() ? el().metadataProvenance(trackId) : apiFetch(`/metadata/provenance/${encodeURIComponent(trackId)}`),
-  metadataSetLock: (trackId, fields, locked) => isE() ? el().metadataSetLock(trackId, fields, locked) : apiFetch('/metadata/lock', { method: 'POST', body: { trackId, fields, locked } }),
+  metadataProviders: () => isE() ? desktopCall('metadataProviders') : apiFetch('/metadata/providers'),
+  metadataLookupTrack: (trackId, options = {}) => isE() ? desktopCall('metadataLookupTrack', trackId, options) : apiFetch('/metadata/lookup-track', { method: 'POST', body: { trackId, ...options } }),
+  metadataLookupAlbum: (trackIds, options = {}) => isE() ? desktopCall('metadataLookupAlbum', trackIds, options) : apiFetch('/metadata/lookup-album', { method: 'POST', body: { trackIds, ...options } }),
+  metadataApply: (changes) => isE() ? desktopCall('metadataApply', changes) : apiFetch('/metadata/apply', { method: 'POST', body: { changes } }),
+  metadataUndo: (batchId) => isE() ? desktopCall('metadataUndo', batchId) : apiFetch('/metadata/undo', { method: 'POST', body: { batchId } }),
+  metadataProvenance: (trackId) => isE() ? desktopCall('metadataProvenance', trackId) : apiFetch(`/metadata/provenance/${encodeURIComponent(trackId)}`),
+  metadataSetLock: (trackId, fields, locked) => isE() ? desktopCall('metadataSetLock', trackId, fields, locked) : apiFetch('/metadata/lock', { method: 'POST', body: { trackId, fields, locked } }),
   lastfmUpdateNowPlaying: (artist, track, album, duration) => isE() ? el().lastfmUpdateNowPlaying(artist, track, album, duration) : apiFetch('/lastfm/update-now-playing', { method:'POST', body:{artist, track, album, duration} }),
   onLastfmAuthToken: (fn) => {
     if (isE() && typeof el().onLastfmAuthToken === 'function') {

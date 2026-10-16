@@ -17,6 +17,12 @@ import {
 // (electron/metadata/store.js), so rescans and lookups leave them alone.
 
 const FIELD_BY_ID = Object.fromEntries(TRACK_FIELDS.map(field => [field.id, field]))
+// A lookup asks several sources one after another; past this, something is stuck.
+const LOOKUP_TIMEOUT_MS = 90000
+const withTimeout = promise => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error('The lookup took too long. Try again, or with fewer sources.')), LOOKUP_TIMEOUT_MS)),
+])
 const isBlank = value => value === null || value === undefined || value === ''
 // "Music" is a placeholder some files carry, not a genre.
 const isEmptyField = (id, value) => isBlank(value) || (id === 'genres' && String(value).trim().toLowerCase() === 'music')
@@ -57,13 +63,15 @@ function ScoreBadge({ score }) {
 function useProviders() {
   const [providers, setProviders] = useState([])
   const [chosen, setChosen] = useState(null)
+  const [error, setError] = useState('')
   useEffect(() => {
     let live = true
-    Promise.resolve(api.metadataProviders?.()).then(list => {
-      if (!live || !Array.isArray(list)) return
+    Promise.resolve().then(() => api.metadataProviders()).then(list => {
+      if (!live) return
+      if (!Array.isArray(list)) throw new Error(list?.error || 'Could not list the online sources.')
       setProviders(list)
       setChosen(new Set(list.filter(provider => provider.available).map(provider => provider.id)))
-    }).catch(() => {})
+    }).catch(failure => { if (live) setError(failure?.message || 'Could not list the online sources.') })
     return () => { live = false }
   }, [])
   const toggle = id => setChosen(current => {
@@ -72,7 +80,7 @@ function useProviders() {
     else next.add(id)
     return next
   })
-  return { providers, chosen, toggle }
+  return { providers, chosen, toggle, error }
 }
 
 function ProviderChips({ providers, chosen, onToggle }) {
@@ -186,7 +194,7 @@ function TrackFix({ tracks, sources, onApplied }) {
     if (!track?.id || !sources.chosen) return
     const version = ++request.current
     setState(current => ({ ...current, loading: true, errors: [] }))
-    const result = await api.metadataLookupTrack(track.id, { query: custom || {}, providers: [...sources.chosen] }).catch(error => ({ error: error.message }))
+    const result = await withTimeout(api.metadataLookupTrack(track.id, { query: custom || {}, providers: [...sources.chosen] })).catch(error => ({ error: error.message }))
     if (version !== request.current) return
     if (result?.error) { setState({ loading: false, candidates: [], errors: [result.error], provenance: {} }); return }
     const candidates = result.candidates || []
@@ -442,7 +450,7 @@ function AlbumFix({ tracks, sources, onApplied }) {
     if (!sources.chosen) return
     const version = ++request.current
     setState(current => ({ ...current, loading: true, errors: [] }))
-    const result = await api.metadataLookupAlbum(ids, { query: custom || {}, providers: [...sources.chosen] }).catch(error => ({ error: error.message }))
+    const result = await withTimeout(api.metadataLookupAlbum(ids, { query: custom || {}, providers: [...sources.chosen] })).catch(error => ({ error: error.message }))
     if (version !== request.current) return
     if (result?.error) { setState(current => ({ ...current, loading: false, releases: [], errors: [result.error] })); return }
     setState({ loading: false, releases: result.releases || [], errors: result.errors || [], tracks: result.tracks || [], provenance: result.provenance || {} })
@@ -658,7 +666,9 @@ export default function FixMetadataPanel({ open, tracks = [], onClose, onApplied
           ? <AlbumFix tracks={list} sources={sources} onApplied={onApplied} />
           : <TrackFix tracks={list} sources={sources} onApplied={onApplied} />
       )}
-      {open && !sources.chosen && <p role="status" className="flex items-center gap-2 text-xs text-muted"><Loader2 size={13} className="animate-spin" /> {t('Loading…')}</p>}
+      {open && !sources.chosen && (sources.error
+        ? <p role="alert" className="flex items-center gap-2 text-xs text-yellow-200/80"><AlertCircle size={13} /> {sources.error}</p>
+        : <p role="status" className="flex items-center gap-2 text-xs text-muted"><Loader2 size={13} className="animate-spin" /> {t('Loading…')}</p>)}
     </Modal>
   )
 }
