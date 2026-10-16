@@ -1078,6 +1078,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
           setEditingTrack(updatedTrack)
           window.dispatchEvent(new Event('lokal:refresh'))
         }}
+        onFixOnline={() => { setFixingTracks([editingTrack]); setEditingTrack(null) }}
       />
 
       <BatchEditModal

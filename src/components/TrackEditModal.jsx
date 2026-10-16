@@ -1,10 +1,42 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Camera, Save, RefreshCw, Check, AlertCircle } from 'lucide-react'
+import { X, Camera, Save, RefreshCw, Check, AlertCircle, Lock, Unlock, Sparkles } from 'lucide-react'
 import { api } from '../api'
 import Modal from './Modal'
 import GenreValueInput from './GenreValueInput'
 import { usePlayerStore } from '../store/player'
+import { SOURCE_LABELS } from '../metadataFields'
+import { keyLabel } from '../smartPlaylists'
+
+const LABEL_CLASS = 'text-xs font-display text-muted uppercase tracking-widest'
+
+/**
+ * A field's name, where its value came from (electron/metadata/store.js) and
+ * its lock: a locked value is left alone by rescans, imports and lookups.
+ */
+function FieldLabel({ label, field, provenance, onToggleLock, small = false }) {
+  const meta = provenance?.[field]
+  return (
+    <div className="mb-1 flex items-center gap-1.5">
+      <label className={small ? 'text-[11px] text-muted uppercase tracking-widest' : LABEL_CLASS}>{label}</label>
+      {meta?.source && meta.source !== 'file' && (
+        <span className="rounded border border-border px-1 py-px text-[9px] uppercase tracking-wider text-muted">{SOURCE_LABELS[meta.source] || meta.source}</span>
+      )}
+      {onToggleLock && (
+        <button
+          type="button"
+          onClick={() => onToggleLock(field, !meta?.locked)}
+          aria-pressed={!!meta?.locked}
+          aria-label={meta?.locked ? `Unlock ${label}` : `Lock ${label}`}
+          title={meta?.locked ? 'Locked: rescans, imports and lookups leave it. Click to unlock.' : 'Lock it, so rescans, imports and lookups leave it'}
+          className={`ml-auto rounded p-0.5 transition-colors ${meta?.locked ? 'text-accent' : 'text-muted/40 hover:text-white'}`}
+        >
+          {meta?.locked ? <Lock size={11} /> : <Unlock size={11} />}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function asInput(value) {
   return value === null || value === undefined ? '' : String(value)
@@ -32,7 +64,10 @@ function parseNumberField(value) {
   return Number.isNaN(parsed) ? null : parsed
 }
 
-export default function TrackEditModal({ track, open, onClose, onSave }) {
+/**
+ * @param onFixOnline  opens Fix Metadata for the song (online lookups); no button without it
+ */
+export default function TrackEditModal({ track, open, onClose, onSave, onFixOnline = null }) {
   const syncTrack = usePlayerStore(s => s.syncTrack)
   const [formData, setFormData] = useState({
     title: '',
@@ -63,6 +98,22 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
   const [status, setStatus] = useState(null)
   const [artworkPreview, setArtworkPreview] = useState(null)
   const [genreOptions, setGenreOptions] = useState([])
+  const [provenance, setProvenance] = useState({})
+
+  useEffect(() => {
+    if (!open || !track?.id) return undefined
+    let active = true
+    Promise.resolve(api.metadataProvenance?.(track.id)).then(result => {
+      if (active) setProvenance(result && !result.error ? result : {})
+    }).catch(() => { if (active) setProvenance({}) })
+    return () => { active = false }
+  }, [open, track?.id, track?.artwork_path, track?.title, track?.genre, track?.year])
+
+  const toggleLock = async (field, locked) => {
+    const result = await api.metadataSetLock(track.id, [field], locked).catch(() => null)
+    if (result && !result.error) setProvenance(result)
+  }
+  const fieldLabel = (label, field, small = false) => <FieldLabel label={label} field={field} provenance={provenance} onToggleLock={track?.id ? toggleLock : null} small={small} />
 
   useEffect(() => {
     if (!open) return
@@ -203,7 +254,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
     if (!track) return
     
     setSaving(true)
-    setStatus({ type: 'loading', message: 'Searching iTunes for artwork...' })
+    setStatus({ type: 'loading', message: 'Searching online for artwork...' })
     
     try {
       const result = await api.fetchExternalArtwork(track.id, track.title, track.artist)
@@ -215,7 +266,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
         setStatus({ type: 'success', message: 'Artwork found and updated!' })
         if (onSave) onSave(updatedTrack)
       } else {
-        setStatus({ type: 'error', message: result?.error || 'No artwork found on iTunes' })
+        setStatus({ type: 'error', message: result?.error || 'No artwork found online' })
       }
     } catch (e) {
       setStatus({ type: 'error', message: e.message })
@@ -252,13 +303,13 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
               className="mt-2 w-full py-1.5 text-xs bg-card border border-border rounded-lg text-muted hover:text-accent hover:border-accent/30 transition-colors flex items-center justify-center gap-1"
             >
               {saving ? <RefreshCw size={12} className="animate-spin" /> : null}
-              iTunes Artwork
+              Find artwork online
             </button>
           </div>
           
           <div className="flex-1 space-y-3">
             <div>
-              <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Title</label>
+              {fieldLabel('Title', 'title')}
               <input 
                 value={formData.title}
                 onChange={(e) => handleChange('title', e.target.value)}
@@ -268,7 +319,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
             </div>
             
             <div>
-              <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Artist</label>
+              {fieldLabel('Artist', 'artist')}
               <input 
                 value={formData.artist}
                 onChange={(e) => handleChange('artist', e.target.value)}
@@ -280,7 +331,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
         </div>
 
         <div>
-          <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Album</label>
+          {fieldLabel('Album', 'album')}
           <input 
             value={formData.album}
             onChange={(e) => handleChange('album', e.target.value)}
@@ -290,7 +341,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
         </div>
 
         <div>
-          <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Album Artist</label>
+          {fieldLabel('Album Artist', 'album_artist')}
           <input 
             value={formData.album_artist}
             onChange={(e) => handleChange('album_artist', e.target.value)}
@@ -301,7 +352,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
 
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Track #</label>
+            {fieldLabel('Track #', 'track_num')}
             <input 
               type="number"
               min="1"
@@ -312,7 +363,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
             />
           </div>
           <div>
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Year</label>
+            {fieldLabel('Year', 'year')}
             <input 
               type="number"
               min="1900"
@@ -324,7 +375,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
             />
           </div>
           <div>
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Genre</label>
+            {fieldLabel('Genre', 'genre')}
             <GenreValueInput
               value={formData.genre}
               onChange={(value) => handleChange('genre', value)}
@@ -337,7 +388,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Genres</label>
+            {fieldLabel('Genres', 'genres')}
             <GenreValueInput
               value={formData.genres}
               onChange={(value) => handleChange('genres', value)}
@@ -348,7 +399,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
             />
           </div>
           <div>
-            <label className="text-xs font-display text-muted uppercase tracking-widest block mb-1">Record Label</label>
+            {fieldLabel('Record Label', 'record_label')}
             <input
               value={formData.record_label}
               onChange={(e) => handleChange('record_label', e.target.value)}
@@ -396,11 +447,11 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
               <input value={formData.danceability} onChange={(e) => handleChange('danceability', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.522" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Energy</label>
+              {fieldLabel('Energy', 'energy', true)}
               <input value={formData.energy} onChange={(e) => handleChange('energy', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.992" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Key</label>
+              {fieldLabel(keyLabel(formData.track_key, formData.mode) ? `Key · ${keyLabel(formData.track_key, formData.mode)}` : 'Key', 'track_key', true)}
               <input value={formData.track_key} onChange={(e) => handleChange('track_key', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0" />
             </div>
             <div>
@@ -432,7 +483,7 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
               <input value={formData.valence} onChange={(e) => handleChange('valence', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="0.701" />
             </div>
             <div>
-              <label className="text-[11px] text-muted uppercase tracking-widest block mb-1">Tempo</label>
+              {fieldLabel('Tempo', 'tempo', true)}
               <input value={formData.tempo} onChange={(e) => handleChange('tempo', e.target.value)} className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50" placeholder="73.528" />
             </div>
             <div>
@@ -462,7 +513,19 @@ export default function TrackEditModal({ track, open, onClose, onSave }) {
           )}
         </AnimatePresence>
 
+        <p className="text-[11px] text-muted">Saved values are locked: rescans, imports and lookups leave them alone.</p>
+
         <div className="flex gap-2 pt-2">
+          {onFixOnline && (
+            <button
+              type="button"
+              onClick={onFixOnline}
+              title="Look the song up online and pick its details"
+              className="flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-muted transition-colors hover:border-accent/30 hover:text-accent"
+            >
+              <Sparkles size={15} /> Find online…
+            </button>
+          )}
           <button 
             onClick={onClose}
             className="flex-1 py-2.5 bg-card border border-border rounded-xl text-sm text-muted hover:text-white transition-colors"
