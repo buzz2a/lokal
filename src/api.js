@@ -599,6 +599,16 @@ export const api = {
   listenbrainzSetEnabled: (enabled) => isE() ? el().listenbrainzSetEnabled(enabled) : apiFetch('/listenbrainz/enabled', { method: 'POST', body: { enabled } }),
   listenbrainzNowPlaying: (track) => isE() ? el().listenbrainzNowPlaying(track) : apiFetch('/listenbrainz/now-playing', { method: 'POST', body: { track } }),
   listenbrainzSubmit: (track, listenedAt) => isE() ? el().listenbrainzSubmit(track, listenedAt) : apiFetch('/listenbrainz/submit', { method: 'POST', body: { track, listenedAt } }),
+  beatportStatus: () => isE() ? el().beatportStatus() : apiFetch('/beatport/status'),
+  beatportLogin: (username, password) => isE() ? el().beatportLogin(username, password) : apiFetch('/beatport/login', { method: 'POST', body: { username, password } }),
+  beatportConnectToken: (token) => isE() ? el().beatportConnectToken(token) : apiFetch('/beatport/token', { method: 'POST', body: { token } }),
+  beatportDisconnect: () => isE() ? el().beatportDisconnect() : apiFetch('/beatport/disconnect', { method: 'POST' }),
+  beatportGenres: () => isE() ? el().beatportGenres() : apiFetch('/beatport/genres'),
+  beatportTop: (genreId) => isE() ? el().beatportTop(genreId) : apiFetch(`/beatport/top${genreId ? `?genre=${encodeURIComponent(genreId)}` : ''}`),
+  beatportCharts: ({ genreId, page = 1 } = {}) => isE() ? el().beatportCharts({ genreId, page }) : apiFetch(`/beatport/charts?${new URLSearchParams({ page: String(page), ...(genreId ? { genre: String(genreId) } : {}) })}`),
+  beatportChart: (id) => isE() ? el().beatportChart(id) : apiFetch(`/beatport/charts/${encodeURIComponent(id)}`),
+  beatportPlaylists: ({ page = 1 } = {}) => isE() ? el().beatportPlaylists({ page }) : apiFetch(`/beatport/playlists?page=${encodeURIComponent(page)}`),
+  beatportPlaylist: (id) => isE() ? el().beatportPlaylist(id) : apiFetch(`/beatport/playlists/${encodeURIComponent(id)}`),
   lastfmUpdateNowPlaying: (artist, track, album, duration) => isE() ? el().lastfmUpdateNowPlaying(artist, track, album, duration) : apiFetch('/lastfm/update-now-playing', { method:'POST', body:{artist, track, album, duration} }),
   onLastfmAuthToken: (fn) => {
     if (isE() && typeof el().onLastfmAuthToken === 'function') {

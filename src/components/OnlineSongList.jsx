@@ -37,8 +37,9 @@ const time = seconds => {
  * @param showAlbum      show each song's album (an artist's songs)
  * @param highlightTitle the song to mark (the one playing when the page was opened)
  * @param markOwned      mark the library's songs "In library" (a download button on the others)
+ * @param showMeta       show each song's BPM and key, when it has them (Beatport's)
  */
-export default function OnlineSongList({ tracks, onPlay, numbered = false, showAlbum = false, highlightTitle = '', markOwned = false }) {
+export default function OnlineSongList({ tracks, onPlay, numbered = false, showAlbum = false, highlightTitle = '', markOwned = false, showMeta = false }) {
   const nav = useNavigate()
   const menu = useContextMenu()
   const userId = useAppStore(state => state.user?.id)
@@ -97,6 +98,7 @@ export default function OnlineSongList({ tracks, onPlay, numbered = false, showA
             <span className="flex items-center justify-end gap-3">
               {own && <span title="In your library" className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent"><CheckCircle2 size={11} /> In library</span>}
               {markOwned && !own && <button type="button" onClick={event => { event.stopPropagation(); downloadOnline([track]) }} title={`Download ${track.title}`} aria-label={`Download ${track.title}`} className="text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100 focus:opacity-100"><Download size={14} /></button>}
+              {showMeta && (track.bpm || track.camelot || track.key) && <span title={track.key || undefined} className="hidden text-xs tabular-nums text-muted @md:inline">{[track.bpm && `${track.bpm} BPM`, track.camelot || track.key].filter(Boolean).join(' · ')}</span>}
               <span className="text-xs tabular-nums text-subtle">{time(track.duration)}</span>
             </span>
           </div>

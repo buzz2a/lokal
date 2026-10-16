@@ -28,6 +28,7 @@ const { registerUserHandlers } = require('./ipc/users')
 const { registerDiscordHandlers, disconnectForQuit } = require('./ipc/discord')
 const { registerLastFmHandlers } = require('./ipc/lastfm')
 const { registerListenBrainzHandlers } = require('./ipc/listenbrainz')
+const { registerBeatportHandlers } = require('./ipc/beatport')
 const { registerToolsHandlers } = require('./ipc/tools')
 const { registerPlaylistHandlers } = require('./ipc/playlists')
 const { initPlugins, registerPluginHandlers } = require('./ipc/plugins')
@@ -472,7 +473,7 @@ app.whenReady().then(() => {
   for (const fn of [
     registerScannerHandlers, registerPlayerHandlers, registerDownloaderHandlers,
     registerExtraDownloaderHandlers, registerPlaylistArchiveHandlers, registerLyricsHandlers, registerUserHandlers,
-    registerDiscordHandlers, registerExtraHandlers, registerV4Handlers, registerLastFmHandlers, registerListenBrainzHandlers,
+    registerDiscordHandlers, registerExtraHandlers, registerV4Handlers, registerLastFmHandlers, registerListenBrainzHandlers, registerBeatportHandlers,
     registerToolsHandlers, registerPlaylistHandlers, registerMixesHandlers, registerPluginHandlers, registerRecapHandlers,
     registerQualityHandlers, registerLibraryKeysHandlers
   ]) {

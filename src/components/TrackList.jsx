@@ -93,6 +93,20 @@ function SortableHeader({ column, label, children, sort, onSortChange, className
   </button>
 }
 
+/**
+ * A row's cover: its artwork file, else its online artwork, else a note. A
+ * file can be gone while the list still shows the song (a rescan gives a
+ * changed file a new id and artwork file): the next one is tried then.
+ */
+function RowArt({ src, fallback }) {
+  const candidates = useMemo(() => [...new Set([src, fallback].filter(Boolean))], [src, fallback])
+  const [failed, setFailed] = useState(0)
+  useEffect(() => { setFailed(0) }, [candidates])
+  const current = candidates[failed]
+  if (!current) return <div className="w-full h-full flex items-center justify-center text-muted"><Music size={11} /></div>
+  return <img key={current} src={current} onError={() => setFailed(n => n + 1)} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
+}
+
 export default function TrackList({ tracks = [], showQuality = false, onRemove = null, showPlayNext = true, showAddToQueue = true, playlistId = null, onReorder = null, onQuickAdd = null, reduceMotion = false, context = null, highlightTrackId = null, highlightRequestKey = null, extraColumns = [], resolveTracks = null, sort = null, onSortChange = null, trackNumbers = null, toolbarStart = null }) {
   const { t } = useTranslation()
   const resolvedPlaybackRef = useRef(0)
@@ -867,7 +881,7 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
 
             <div className="min-w-0 flex items-center gap-2.5">
               {columns.artwork ? <div className="w-8 h-8 rounded flex-shrink-0 overflow-hidden bg-card relative">
-                {resolveTracks ? <DiscoveryImage item={track} src={src} className="w-full h-full object-cover" /> : src ? <img src={src} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" /> : <div className="w-full h-full flex items-center justify-center text-muted"><Music size={11} /></div>}
+                {resolveTracks ? <DiscoveryImage item={track} src={src} className="w-full h-full object-cover" /> : <RowArt src={src} fallback={track.artwork_url} />}
                 {!layout.number && <button onClick={e => handlePlay(track, e)} aria-label={`${isCurrent && isPlaying ? 'Pause' : 'Play'} ${track.title}`}
                   className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 text-white">
                   {isCurrent && isPlaying ? <Pause size={14} /> : <Play size={14} />}

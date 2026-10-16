@@ -3,8 +3,9 @@ const path = require('path')
 const fs = require('fs-extra')
 
 function getDataDir() {
-  
-  if (process.env.LOKAL_DATA_DIR) return process.env.LOKAL_DATA_DIR
+  // .env values aren't shell-expanded: "~/..." would make a folder named "~".
+  const configured = String(process.env.LOKAL_DATA_DIR || '').trim()
+  if (configured) return path.resolve(configured.replace(/^~(?=$|[\\/])/, require('os').homedir()))
   if (process.type === 'browser' || process.versions?.electron) {
     const { app } = require('electron')
     return path.join(app.getPath('userData'), 'data')

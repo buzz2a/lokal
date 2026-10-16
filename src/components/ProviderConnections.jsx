@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
-import { AudioLines, CheckCircle2, Gamepad2, LogIn, Music2, RefreshCw } from 'lucide-react'
+import { AudioLines, CheckCircle2, Disc3, Gamepad2, LogIn, Music2, RefreshCw } from 'lucide-react'
 import { YoutubeIcon } from './SourceIcon'
 import { api } from '../api'
-import { LastfmSignInModal, ListenBrainzSignInModal } from './ScrobblerSignIn'
+import { BeatportSignInModal, LastfmSignInModal, ListenBrainzSignInModal } from './ScrobblerSignIn'
 import { discordClientId } from '../discord'
 import { getYoutubeAccountStatus, subscribeYoutubeAccountStatus } from '../youtubeAccountStatus'
 
@@ -55,8 +55,9 @@ export default function ProviderConnections({ compact = false, settingsOverride 
   const [settings, setSettings] = useState(() => settingsOverride || {})
   const [loading, setLoading] = useState(!settingsOverride)
   const [refreshing, setRefreshing] = useState(false)
-  const [signIn, setSignIn] = useState(null) // 'lastfm' | 'listenbrainz'
+  const [signIn, setSignIn] = useState(null) // 'lastfm' | 'listenbrainz' | 'beatport'
   const [listenbrainz, setListenbrainz] = useState(null)
+  const [beatport, setBeatport] = useState(null)
   const [discord, setDiscord] = useState({ connected: false, busy: false, error: '' })
   const [youtubeAuthorizing, setYoutubeAuthorizing] = useState(false)
   const [youtubeSigningIn, setYoutubeSigningIn] = useState(false)
@@ -76,6 +77,11 @@ export default function ProviderConnections({ compact = false, settingsOverride 
     onListenBrainzChanged?.(status)
   }).catch(() => {})
   useEffect(() => { refreshListenBrainz() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refreshBeatport = () => Promise.resolve(api.beatportStatus?.()).then(status => {
+    if (status && !status.error) setBeatport(status)
+  }).catch(() => {})
+  useEffect(() => { refreshBeatport() }, [])
 
   const refreshDiscord = () => Promise.resolve(api.discordStatus?.()).then(status => setDiscord(d => ({ ...d, connected: !!status?.connected }))).catch(() => {})
   useEffect(() => { if (api.isElectron) refreshDiscord() }, [])
@@ -119,6 +125,7 @@ export default function ProviderConnections({ compact = false, settingsOverride 
       else setLoading(false)
     }
     refreshListenBrainz()
+    refreshBeatport()
     if (api.isElectron) refreshDiscord()
   }
 
@@ -165,6 +172,13 @@ export default function ProviderConnections({ compact = false, settingsOverride 
     if (!window.confirm('Disconnect ListenBrainz?')) return
     await Promise.resolve(api.listenbrainzDisconnect()).catch(() => {})
     refreshListenBrainz()
+  }
+
+  const disconnectBeatport = async () => {
+    if (!window.confirm('Disconnect Beatport?')) return
+    await Promise.resolve(api.beatportDisconnect()).catch(() => {})
+    refreshBeatport()
+    window.dispatchEvent(new Event('lokal:beatport'))
   }
 
   const disconnectYouTube = async () => {
@@ -220,6 +234,12 @@ export default function ProviderConnections({ compact = false, settingsOverride 
             : <ActionButton onClick={() => setSignIn('listenbrainz')}><LogIn size={13} />Sign in</ActionButton>}
         </AccountCard>
 
+        <AccountCard icon={Disc3} tint="bg-lime-400/10 text-lime-300" name="Beatport" connected={!!beatport?.connected}
+          status={beatport?.connected ? `Connected as ${beatport.username || 'Beatport user'}` : 'Not connected'}>
+          <ActionButton onClick={() => setSignIn('beatport')}><LogIn size={13} />{beatport?.connected ? 'Reconnect' : 'Sign in'}</ActionButton>
+          {beatport?.connected && <ActionButton onClick={disconnectBeatport} muted>Disconnect</ActionButton>}
+        </AccountCard>
+
         <AccountCard icon={YoutubeIcon} tint="bg-red-600/10 text-red-300" name="YouTube Music" connected={youtubeConnected}
           note={youtubeState.tone === 'error' ? youtubeState.message : youtubeStatus.error}
           status={!api.isElectron ? 'Available in the desktop app' : youtubeConnected ? 'Connected' : youtubeAccountReady ? youtubeStatus.error ? 'Needs signing in again' : 'Not verified' : 'Not connected'}>
@@ -238,6 +258,7 @@ export default function ProviderConnections({ compact = false, settingsOverride 
       </div>
       <LastfmSignInModal open={signIn === 'lastfm'} onClose={() => setSignIn(null)} settings={settings} onConnected={changeSettings} />
       <ListenBrainzSignInModal open={signIn === 'listenbrainz'} onClose={() => setSignIn(null)} onConnected={refreshListenBrainz} />
+      <BeatportSignInModal open={signIn === 'beatport'} onClose={() => setSignIn(null)} onConnected={() => { refreshBeatport(); window.dispatchEvent(new Event('lokal:beatport')) }} />
     </div>
   )
 }

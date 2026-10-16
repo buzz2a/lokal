@@ -63,6 +63,10 @@ This file tracks known bugs and limitations. Some may be fixed in future updates
 
 * **Rate limits** — Many lyric searches or metadata lookups in a short time can fail for a while because of the services' rate limits.
 
+* **Beatport sign-in** — Beatport has no public developer sign-up, so Lokal signs in with the client ID of Beatport's own API docs page. If Beatport changes that page, password sign-in can stop working: use the *Token* tab instead.
+
+* **Beatport blocked** — An `api.beatport.com` entry in the hosts file (or a blocker) stops Beatport. Lokal says so; remove the entry and restart Lokal.
+
 ---
 
 ## Web Mode

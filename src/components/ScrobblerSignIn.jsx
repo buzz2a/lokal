@@ -2,6 +2,7 @@
 // numbered steps, nothing else.
 //   Last.fm:     create an API account, key, secret, username, authorize.
 //   ListenBrainz: get the user token, paste it, connect.
+//   Beatport:     username and password, or a token from the API docs page.
 
 import React, { useEffect, useRef, useState } from 'react'
 import { ExternalLink, Loader2 } from 'lucide-react'
@@ -138,6 +139,69 @@ export function ListenBrainzSignInModal({ open, onClose, onConnected }) {
             onKeyDown={e => { if (e.key === 'Enter') connect() }} placeholder="User token" spellCheck={false} autoComplete="off" className={input} />
         </Step>
         <Step n={3}><PrimaryButton onClick={connect} disabled={!token.trim() || status?.busy} busy={status?.busy}>Connect</PrimaryButton></Step>
+        <Status status={status} />
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * Beatport: username and password (only the token Beatport gives back is
+ * kept), or a token copied from the API docs page when that sign-in fails.
+ */
+export function BeatportSignInModal({ open, onClose, onConnected }) {
+  const [mode, setMode] = useState('password') // 'password' | 'token'
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [token, setToken] = useState('')
+  const [status, setStatus] = useState(null)
+  useEffect(() => { if (open) { setMode('password'); setPassword(''); setToken(''); setStatus(null) } }, [open])
+
+  const ready = mode === 'password' ? username.trim() && password : token.trim()
+  const connect = async () => {
+    if (!ready || status?.busy) return
+    setStatus({ message: 'Signing in to Beatport…', busy: true })
+    const result = await Promise.resolve(mode === 'password' ? api.beatportLogin(username.trim(), password) : api.beatportConnectToken(token.trim()))
+      .catch(e => ({ error: e.message }))
+    setPassword('')
+    if (!result?.ok) { setStatus({ message: result?.error || 'Beatport sign-in failed.', error: true }); return }
+    setStatus(null)
+    onConnected?.(result)
+    onClose?.()
+  }
+  const onEnter = e => { if (e.key === 'Enter') connect() }
+  const tab = active => `flex-1 rounded-lg px-3 py-1.5 text-xs transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-muted hover:text-white'}`
+
+  return (
+    <Modal open={open} onClose={onClose} title="Sign in to Beatport" width="max-w-sm">
+      <div className="space-y-4">
+        <div className="flex gap-1 rounded-xl border border-border bg-card/40 p-1">
+          <button type="button" className={tab(mode === 'password')} onClick={() => { setMode('password'); setStatus(null) }}>Account</button>
+          <button type="button" className={tab(mode === 'token')} onClick={() => { setMode('token'); setStatus(null) }}>Token</button>
+        </div>
+        {mode === 'password' ? (
+          <>
+            <Step n={1}>
+              <input aria-label="Beatport username" value={username} onChange={e => { setUsername(e.target.value); setStatus(null) }} onKeyDown={onEnter}
+                placeholder="Username or email" spellCheck={false} autoComplete="username" className={input} />
+            </Step>
+            <Step n={2}>
+              <input aria-label="Beatport password" type="password" value={password} onChange={e => { setPassword(e.target.value); setStatus(null) }} onKeyDown={onEnter}
+                placeholder="Password" autoComplete="current-password" className={input} />
+            </Step>
+            <Step n={3}><PrimaryButton onClick={connect} disabled={!ready || status?.busy} busy={status?.busy}>Sign in</PrimaryButton></Step>
+            <p className="text-[11px] leading-relaxed text-subtle">Your password is sent to Beatport only. Lokal keeps the access token Beatport returns, not the password.</p>
+          </>
+        ) : (
+          <>
+            <Step n={1}><LinkButton href="https://api.beatport.com/v4/docs/">Open the Beatport API docs and log in</LinkButton></Step>
+            <Step n={2}>
+              <textarea aria-label="Beatport token" value={token} onChange={e => { setToken(e.target.value); setStatus(null) }} rows={3}
+                placeholder="Paste the JSON of the /auth/o/token/ request (browser dev tools › Network)" spellCheck={false} autoComplete="off" className={`${input} resize-none font-mono text-xs`} />
+            </Step>
+            <Step n={3}><PrimaryButton onClick={connect} disabled={!ready || status?.busy} busy={status?.busy}>Connect</PrimaryButton></Step>
+          </>
+        )}
         <Status status={status} />
       </div>
     </Modal>
