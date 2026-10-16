@@ -1278,18 +1278,9 @@ function registerScannerHandlers(ipcMain) {
   
   ipcMain.handle('track:fetchExternalArtwork', async (_, trackId, title, artist) => {
     const db = getDB()
+    if (!onlineLookupsEnabled(db)) return { success: false, error: 'Turn on "Look Up Missing Info" first.' }
     try {
-      const result = await fetchExternalMetadata(title, artist, trackId)
-      if (result?.artPath) {
-        // Asked for by the user: kept like their own choice.
-        const applied = metadataStore.applyFields(db, trackId, { artwork_path: result.artPath }, { source: result.source, lock: true, batchId: require('crypto').randomUUID() })
-        return {
-          success: true,
-          artworkPath: result.artPath,
-          track: applied.track || null,
-        }
-      }
-      return { success: false, error: 'No artwork found' }
+      return await require('../metadata/apply').fetchExternalArtwork(db, trackId, { title, artist }, { storageDir: getStorageDir() })
     } catch (err) {
       console.error('[track:fetchExternalArtwork]', err.message)
       return { success: false, error: err.message }
@@ -1443,76 +1434,15 @@ function registerScannerHandlers(ipcMain) {
   })
 }
 
+function onlineLookupsEnabled(db) {
+  try { return db.prepare("SELECT value FROM settings WHERE key = 'fetch_online_artwork'").get()?.value !== '0' } catch { return false }
+}
+
+/** A cover and genre found online for a new song without them (electron/metadata). */
 async function fetchExternalMetadata(title, artist, trackId) {
   const db = getDB()
-  try {
-    const setting = db.prepare("SELECT value FROM settings WHERE key = 'fetch_online_artwork'").get()
-    if (setting?.value === '0') return null
-  } catch { return null }
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
-
-  try {
-    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(title + ' ' + artist)}&entity=song&limit=5`
-    const itunesRes = await fetch(itunesUrl, { signal: controller.signal })
-    const itunesData = await itunesRes.json()
-
-    if (itunesData.results && itunesData.results.length > 0) {
-      const result = itunesData.results[0]
-      let artworkUrl = result.artworkUrl100
-      const genre = result.primaryGenreName || null  
-
-      console.log(`[fetchExternalMetadata] iTunes result for "${title}" by "${artist}": genre = "${genre}"`)
-
-      if (artworkUrl) {
-        artworkUrl = artworkUrl.replace('100x100bb', '600x600bb')
-        const artPath = path.join(getStorageDir(), 'artwork', `t-${trackId}.jpg`)
-        try {
-          await downloadImageWithTimeout(artworkUrl, artPath, 5000)
-          clearTimeout(timeout)
-          return { artPath, genre, source: 'itunes' }
-        } catch {}
-      }
-      if (genre) { clearTimeout(timeout); return { artPath: null, genre, source: 'itunes' } }
-    }
-  } catch {}
-
-  clearTimeout(timeout)
-  const controller2 = new AbortController()
-  const timeout2 = setTimeout(() => controller2.abort(), 5000)
-
-  try {
-    const quoted = value => `"${String(value || '').replace(/["\\]/g, '\\$&')}"`
-    const mbQuery = `https://musicbrainz.org/ws/2/recording/?${new URLSearchParams({ query: `recording:${quoted(title)} AND artist:${quoted(artist)}`, fmt: 'json', limit: '3', inc: 'tags' })}`
-    const mbRes = await fetch(mbQuery, {
-      signal: controller2.signal,
-      headers: { 'User-Agent': 'Lokal/4.0 (lokalmusic@email.com)' }
-    })
-    const mbData = await mbRes.json()
-
-    const recording = mbData.recordings?.[0]
-    
-    const tags = recording?.tags?.sort((a, b) => b.count - a.count)
-    const genre = tags?.[0]?.name || null
-
-    console.log(`[fetchExternalMetadata] MusicBrainz result for "${title}" by "${artist}": genre = "${genre}"`)
-
-    if (recording?.releases?.[0]?.id) {
-      const releaseId = recording.releases[0].id
-      const coverUrl = `https://coverartarchive.org/release/${releaseId}/front-500`
-      const artPath = path.join(getStorageDir(), 'artwork', `t-${trackId}.jpg`)
-      try {
-        await downloadImageWithTimeout(coverUrl, artPath, 5000)
-        clearTimeout(timeout2)
-        return { artPath, genre, source: 'musicbrainz' }
-      } catch {}
-    }
-    if (genre) return { artPath: null, genre, source: 'musicbrainz' }
-  } catch {}
-
-  clearTimeout(timeout2)
-  return null
+  if (!onlineLookupsEnabled(db)) return null
+  return require('../metadata/apply').fetchArtworkAndGenre(db, { title, artist, trackId }, { storageDir: getStorageDir() }).catch(() => null)
 }
 
 function downloadImageWithTimeout(url, dest, timeoutMs) {

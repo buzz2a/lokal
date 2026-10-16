@@ -609,6 +609,14 @@ export const api = {
   beatportChart: (id) => isE() ? el().beatportChart(id) : apiFetch(`/beatport/charts/${encodeURIComponent(id)}`),
   beatportPlaylists: ({ page = 1 } = {}) => isE() ? el().beatportPlaylists({ page }) : apiFetch(`/beatport/playlists?page=${encodeURIComponent(page)}`),
   beatportPlaylist: (id) => isE() ? el().beatportPlaylist(id) : apiFetch(`/beatport/playlists/${encodeURIComponent(id)}`),
+  // Fix Metadata (electron/metadata): online lookups, apply/undo, sources and locks.
+  metadataProviders: () => isE() ? el().metadataProviders() : apiFetch('/metadata/providers'),
+  metadataLookupTrack: (trackId, options = {}) => isE() ? el().metadataLookupTrack(trackId, options) : apiFetch('/metadata/lookup-track', { method: 'POST', body: { trackId, ...options } }),
+  metadataLookupAlbum: (trackIds, options = {}) => isE() ? el().metadataLookupAlbum(trackIds, options) : apiFetch('/metadata/lookup-album', { method: 'POST', body: { trackIds, ...options } }),
+  metadataApply: (changes) => isE() ? el().metadataApply(changes) : apiFetch('/metadata/apply', { method: 'POST', body: { changes } }),
+  metadataUndo: (batchId) => isE() ? el().metadataUndo(batchId) : apiFetch('/metadata/undo', { method: 'POST', body: { batchId } }),
+  metadataProvenance: (trackId) => isE() ? el().metadataProvenance(trackId) : apiFetch(`/metadata/provenance/${encodeURIComponent(trackId)}`),
+  metadataSetLock: (trackId, fields, locked) => isE() ? el().metadataSetLock(trackId, fields, locked) : apiFetch('/metadata/lock', { method: 'POST', body: { trackId, fields, locked } }),
   lastfmUpdateNowPlaying: (artist, track, album, duration) => isE() ? el().lastfmUpdateNowPlaying(artist, track, album, duration) : apiFetch('/lastfm/update-now-playing', { method:'POST', body:{artist, track, album, duration} }),
   onLastfmAuthToken: (fn) => {
     if (isE() && typeof el().onLastfmAuthToken === 'function') {

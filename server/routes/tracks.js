@@ -529,6 +529,17 @@ router.put('/:id', (req, res) => {
   res.json(metadataStore.editTrack(getDB(), req.params.id, req.body || {}))
 })
 
+router.post('/:id/fetch-external-artwork', async (req, res) => {
+  const db = getDB()
+  if (db.prepare("SELECT value FROM settings WHERE key = 'fetch_online_artwork'").get()?.value === '0') return res.json({ success: false, error: 'Turn on "Look Up Missing Info" first.' })
+  try {
+    const { getStorageDir } = require('../../electron/ipc/db')
+    res.json(await require('../../electron/metadata/apply').fetchExternalArtwork(db, req.params.id, req.body || {}, { storageDir: getStorageDir() }))
+  } catch (e) {
+    res.json({ success: false, error: e.message })
+  }
+})
+
 router.post('/batch-update', async (req, res) => {
   const db = getDB()
   try {

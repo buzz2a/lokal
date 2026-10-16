@@ -336,6 +336,39 @@ async function playlist(db, id) {
   return { ...playlistOf(info), tracks }
 }
 
+// ---------------------------------------------------------------- lookups
+// For Fix Metadata (electron/metadata/providers/beatport.js): raw Beatport
+// objects, so every detail can be read. These throw.
+
+const resultsOf = (json, kind) => {
+  const found = json?.[kind]
+  return json?.results || found?.results || found?.data || (Array.isArray(found) ? found : null) || json?.data || []
+}
+
+/** Songs with this ISRC, else matching a search. */
+async function findTracks(db, { isrc = '', query = '', perPage = 10 } = {}) {
+  if (isrc) {
+    const found = resultsOf(await get(db, '/catalog/tracks/', { isrc, per_page: perPage }), 'tracks')
+    if (found.length) return found
+  }
+  if (!query) return []
+  return resultsOf(await get(db, '/catalog/search/', { q: query, type: 'tracks', per_page: perPage }), 'tracks')
+}
+
+async function findReleases(db, query, perPage = 5) {
+  if (!query) return []
+  return resultsOf(await get(db, '/catalog/search/', { q: query, type: 'releases', per_page: perPage }), 'releases')
+}
+
+/** A release and its songs. */
+async function releaseWithTracks(db, id) {
+  const [release, tracks] = await Promise.all([
+    get(db, `/catalog/releases/${encodeURIComponent(id)}/`),
+    get(db, `/catalog/releases/${encodeURIComponent(id)}/tracks/`, { per_page: 100 }),
+  ])
+  return { release, tracks: tracks?.results || [] }
+}
+
 /** Run a catalog call, answering { error, signedOut } instead of throwing. */
 async function safe(work) {
   try { return await work() } catch (error) { return { error: error.message, signedOut: error.code === 'signed_out' } }
@@ -349,5 +382,5 @@ module.exports = {
   chart: (db, id) => safe(() => chart(db, id)),
   playlists: (db, options) => safe(() => playlists(db, options)),
   playlist: (db, id) => safe(() => playlist(db, id)),
-  trackOf,
+  trackOf, imageOf, findTracks, findReleases, releaseWithTracks,
 }
