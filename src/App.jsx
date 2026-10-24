@@ -42,6 +42,7 @@ import Recap from './pages/Recap'
 import Quality from './pages/Quality'
 import Radio from './pages/Radio'
 import Beatport from './pages/Beatport'
+import Shazam from './pages/Shazam'
 import LosslessModal from './components/LosslessModal'
 import BulkLosslessModal from './components/BulkLosslessModal'
 import SmartPlaylistModal from './components/SmartPlaylistModal'
@@ -335,6 +336,7 @@ function AnimatedRoutes() {
         <Route path="/quality" element={<PageTransition gated><Quality /></PageTransition>} />
         <Route path="/radio" element={<PageTransition gated><Radio /></PageTransition>} />
         <Route path="/beatport" element={<PageTransition><Beatport /></PageTransition>} />
+        <Route path="/shazam" element={<PageTransition><Shazam /></PageTransition>} />
         <Route path="/recap" element={<PageTransition gated><Recap /></PageTransition>} />
         <Route path="/settings" element={<PageTransition gated><Settings /></PageTransition>} />
       </Routes>

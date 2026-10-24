@@ -36,11 +36,12 @@
 - **Audio quality checker** that sorts your files into Hi-res, Lossless, High and Low, spots fake FLACs, and upgrades a whole selection to lossless at once
 - **Discovery, Mix and Radio** from your Last.fm or YouTube Music account, played from your library first, then from YouTube Music, SoundCloud or your addons
 - **Beatport charts**: the Top 100 and DJ charts of every genre, and your own Beatport playlists, with BPM and key
+- **Shazam charts**: the most Shazamed songs per country, city and genre, Shazam's playlists, and your own Shazams
 - **Smart playlists** that fill themselves from rules, and **share cards** for playlists, artists and recaps
 - **Mixes, playlists and stats** built from your own listening history
 - **Full-screen player** with moving canvas covers, a colour backdrop, a glass player bar, a mini player and crossfade
 - **Playlists that keep up**: import from a link, a file or a pasted list, and link one to Spotify, Tidal, Apple Music or Qobuz to pull in what's added there
-- **Account connections** for Last.fm, ListenBrainz, YouTube Music, Beatport and Discord, plus a phone remote
+- **Account connections** for Last.fm, ListenBrainz, YouTube Music, Beatport, Shazam and Discord, plus a phone remote
 
 ---
 
@@ -158,6 +159,21 @@ Connect Beatport (Settings → Integrations → Account Connections), then open 
 - **My playlists:** your own Beatport playlists
 
 Songs show BPM and Camelot key. **Play**, **Shuffle**, **Download all** and **Save as playlist** work like an online album: a song you have plays from your files, the others from your Playback Search Priority (Beatport itself doesn't stream). Matches are remembered for the session, so playing another song of the same list starts at once.
+
+---
+
+## Shazam Charts
+
+Open **Shazam** in the sidebar (no account needed for charts and playlists):
+
+- **Charts:** Top 200, Viral and Rising, worldwide or per country, plus genre and city charts
+- **Playlists:** Shazam's own playlists (Risers, Predictions, yearly Top 100s)
+- **My Shazams:** your Shazams, newest first, from any of:
+  - **Import Shazam data:** shazam.com/privacy → *Download your data*, then choose the zip Shazam emails you (or its `SyncedShazams.csv`). No subscription needed; import a newer export to add new Shazams.
+  - **Shazam for Mac:** read automatically when installed (signed in with the same Apple ID as your phone).
+  - **Apple Music** (subscribers): see [Integrations](#integrations).
+
+Songs play, download and save as a playlist like [Beatport Charts](#beatport-charts).
 
 ---
 
@@ -288,6 +304,7 @@ Everything is connected from **Settings → Integrations → Account Connections
 - **Last.fm:** *Sign in*, then follow the numbered steps: create an API account, paste its key and secret, your username, and *Authorize* in the browser. Lokal sends "now playing" and scrobbles (after half the track or 4 minutes); scrobbles made offline are kept and sent later. Your account also powers Discovery, Mix and Radio.
 - **ListenBrainz:** *Sign in* with your user token, for the open alternative by MetaBrainz. Same scrobbling rules, offline listens kept.
 - **Beatport:** *Sign in* with your username and password; Lokal keeps the token Beatport returns (refreshed automatically), never the password. If that fails, the *Token* tab takes the JSON of the `/auth/o/token/` request from [api.beatport.com/v4/docs](https://api.beatport.com/v4/docs/) (browser dev tools → Network). Powers [Beatport Charts](#beatport-charts).
+- **Shazam** (Apple Music subscribers): *Link Apple Music* with your `media-user-token` (music.apple.com → dev tools → Cookies). The Shazam app must sync to Apple Music (Settings → Apple Music → Sync Shazams): Lokal reads the playlist *My Shazam Tracks*. The same token links Apple Music for Followed artists.
 - **YouTube Music** (desktop app): *Sign in* opens YouTube Music in its own Lokal window; use the site's Sign in button. Lokal keeps the session (restored at every start) and uses it for Discovery, your mixes and likes, and to stream songs that need an account. *Verify* checks it's still valid.
 - **Discord Rich Presence:** *Connect* to show what you're listening to ("Listening to…", with the album cover). Use the built-in app, or your own from Discord's developer portal (Settings → Integrations → Discord Rich Presence).
 - **Scrobbling** has one switch per service (Settings → Integrations → Scrobbling), to pause it without signing out.
@@ -407,7 +424,7 @@ src/              React frontend
 - Lyrics: [LRCLIB](https://lrclib.net/), BiniLyrics, BetterLyrics, LyricsPlus, Unison, KuGou and lyrics.ovh
 - Artist info: [Wikidata](https://www.wikidata.org/), [MusicBrainz](https://musicbrainz.org/), [TheAudioDB](https://www.theaudiodb.com/), [Deezer](https://www.deezer.com/) and [Wikipedia](https://www.wikipedia.org/)
 - Recommendations: [Last.fm](https://www.last.fm/) and [YouTube Music](https://music.youtube.com/)
-- Charts and DJ playlists: [Beatport](https://www.beatport.com/)
+- Charts and DJ playlists: [Beatport](https://www.beatport.com/) and [Shazam](https://www.shazam.com/charts)
 
 ---
 
@@ -430,7 +447,7 @@ Lokal has no accounts, analytics or telemetry. Your library, listening history a
 
 - checking GitHub Releases for a new version (stable builds only);
 - looking up lyrics, artwork, artist information, new releases and music videos (the services listed above under *Built With*);
-- Last.fm, ListenBrainz, YouTube Music, Beatport and Discord, if you connect them;
+- Last.fm, ListenBrainz, YouTube Music, Beatport, Shazam (Apple Music) and Discord, if you connect them;
 - searching, streaming and downloading, if you use those features.
 
 ---

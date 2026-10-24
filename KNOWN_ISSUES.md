@@ -65,6 +65,8 @@ This file tracks known bugs and limitations. Some may be fixed in future updates
 
 * **Beatport sign-in** — Beatport has no public developer sign-up, so Lokal signs in with the client ID of Beatport's own API docs page. If Beatport changes that page, password sign-in can stop working: use the *Token* tab instead.
 
+* **My Shazams** — Shazam's website no longer shows your Shazams. Without an Apple Music subscription, import the data export from shazam.com/privacy (it can take days to arrive, and accounts that only sync through iCloud may get an empty file) or install Shazam for Mac. Imported Shazams have covers for the newest 150 songs only.
+
 * **Beatport blocked** — An `api.beatport.com` entry in the hosts file (or a blocker) stops Beatport. Lokal says so; remove the entry and restart Lokal.
 
 ---

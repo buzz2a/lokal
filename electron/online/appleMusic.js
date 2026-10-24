@@ -28,8 +28,8 @@ async function getText(url, fetchImpl) {
   return res.text()
 }
 
-async function developerToken({ fetchImpl = fetch } = {}) {
-  if (developer && developer.exp * 1000 - 60000 > Date.now()) return developer.token
+async function developerToken({ fetchImpl = fetch, refresh = false } = {}) {
+  if (!refresh && developer && developer.exp * 1000 - 60000 > Date.now()) return developer.token
   const page = await getText(`${ORIGIN}/us/browse`, fetchImpl)
   const scripts = [...new Set(page.match(/\/assets\/index[^"']*\.js/g) || [])]
   for (const script of scripts) {

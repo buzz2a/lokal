@@ -3,6 +3,7 @@
 //   Last.fm:     create an API account, key, secret, username, authorize.
 //   ListenBrainz: get the user token, paste it, connect.
 //   Beatport:     username and password, or a token from the API docs page.
+//   Shazam:       the Apple Music media-user-token (My Shazams sync there).
 
 import { useTranslation } from '../i18n'
 import React, { useEffect, useRef, useState } from 'react'
@@ -209,6 +210,43 @@ export function BeatportSignInModal({ open, onClose, onConnected }) {
             <Step n={3}><PrimaryButton onClick={connect} disabled={!ready || status?.busy} busy={status?.busy}>Connect</PrimaryButton></Step>
           </>
         )}
+        <Status status={status} />
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * Shazam: the app syncs "My Shazam Tracks" to the Apple Music library (with a
+ * subscription), read with the media-user-token cookie of music.apple.com.
+ */
+export function ShazamSignInModal({ open, onClose, onConnected }) {
+  const [token, setToken] = useState('')
+  const [status, setStatus] = useState(null)
+  useEffect(() => { if (open) { setToken(''); setStatus(null) } }, [open])
+
+  const connect = async () => {
+    if (!token.trim() || status?.busy) return
+    setStatus({ message: 'Checking with Apple Music…', busy: true })
+    const result = await Promise.resolve(api.shazamConnect(token.trim())).catch(e => ({ error: e.message }))
+    setToken('')
+    if (!result?.ok) { setStatus({ message: result?.error || 'Apple Music did not accept this token.', error: true }); return }
+    setStatus(null)
+    onConnected?.(result)
+    onClose?.()
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Link your Shazams" width="max-w-sm">
+      <div className="space-y-4">
+        <p className="text-xs leading-relaxed text-muted">For Apple Music subscribers: in the Shazam app, turn on Settings › Apple Music › Sync Shazams; they go to the playlist “My Shazam Tracks” of your library, which Lokal reads. Without a subscription, import your Shazam data from the Shazam page instead.</p>
+        <Step n={1}><LinkButton href="https://music.apple.com/">Open music.apple.com and sign in</LinkButton></Step>
+        <Step n={2}>
+          <input aria-label="Apple Music media-user-token" value={token} onChange={e => { setToken(e.target.value); setStatus(null) }} onKeyDown={e => { if (e.key === 'Enter') connect() }}
+            placeholder="media-user-token (dev tools › Cookies)" spellCheck={false} autoComplete="off" className={`${input} font-mono text-xs`} />
+        </Step>
+        <Step n={3}><PrimaryButton onClick={connect} disabled={!token.trim() || status?.busy} busy={status?.busy}>Connect</PrimaryButton></Step>
+        <p className="text-[11px] leading-relaxed text-subtle">Press F12, then Application (Storage in Firefox) › Cookies › music.apple.com, and copy the value of media-user-token. It is only sent to Apple, and also links Apple Music for Followed artists.</p>
         <Status status={status} />
       </div>
     </Modal>

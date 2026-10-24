@@ -53,6 +53,7 @@ app.use('/api/albums', require('./routes/albums'))
 app.use('/api/lastfm', require('./routes/lastfm'))
 app.use('/api/listenbrainz', require('./routes/listenbrainz'))
 app.use('/api/beatport', require('./routes/beatport'))
+app.use('/api/shazam', require('./routes/shazam'))
 app.use('/api/metadata', require('./routes/metadata'))
 app.use('/api/online', require('./routes/online'))
 app.use('/api/remote', (req, res, next) => {

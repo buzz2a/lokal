@@ -1,9 +1,9 @@
 import { useTranslation } from '../i18n'
 import React, { useEffect, useState, useSyncExternalStore } from 'react'
-import { AudioLines, CheckCircle2, Disc3, Gamepad2, LogIn, Music2, RefreshCw } from 'lucide-react'
+import { AudioLines, CheckCircle2, Disc3, Radar, Gamepad2, LogIn, Music2, RefreshCw } from 'lucide-react'
 import { YoutubeIcon } from './SourceIcon'
 import { api } from '../api'
-import { BeatportSignInModal, LastfmSignInModal, ListenBrainzSignInModal } from './ScrobblerSignIn'
+import { BeatportSignInModal, LastfmSignInModal, ListenBrainzSignInModal, ShazamSignInModal } from './ScrobblerSignIn'
 import { discordClientId } from '../discord'
 import { getYoutubeAccountStatus, subscribeYoutubeAccountStatus } from '../youtubeAccountStatus'
 
@@ -28,6 +28,12 @@ function ActionButton({ children, onClick, disabled = false, muted = false }) {
       {children}
     </button>
   )
+}
+
+/** Where the user's Shazams come from, in words. */
+function shazamStatus(status) {
+  const parts = [status?.apple && 'Apple Music linked', status?.imported > 0 && `${status.imported} Shazams imported`, status?.mac && 'Shazam for Mac found'].filter(Boolean)
+  return parts.length ? parts.join(' · ') : 'Charts work without an account'
 }
 
 function AccountCard({ icon: Icon, tint, name, connected, status, note, children }) {
@@ -60,9 +66,10 @@ export default function ProviderConnections({ compact = false, settingsOverride 
   const [settings, setSettings] = useState(() => settingsOverride || {})
   const [loading, setLoading] = useState(!settingsOverride)
   const [refreshing, setRefreshing] = useState(false)
-  const [signIn, setSignIn] = useState(null) // 'lastfm' | 'listenbrainz' | 'beatport'
+  const [signIn, setSignIn] = useState(null) // 'lastfm' | 'listenbrainz' | 'beatport' | 'shazam'
   const [listenbrainz, setListenbrainz] = useState(null)
   const [beatport, setBeatport] = useState(null)
+  const [shazam, setShazam] = useState(null)
   const [discord, setDiscord] = useState({ connected: false, busy: false, error: '' })
   const [youtubeAuthorizing, setYoutubeAuthorizing] = useState(false)
   const [youtubeSigningIn, setYoutubeSigningIn] = useState(false)
@@ -87,6 +94,15 @@ export default function ProviderConnections({ compact = false, settingsOverride 
     if (status && !status.error) setBeatport(status)
   }).catch(() => {})
   useEffect(() => { refreshBeatport() }, [])
+
+  const refreshShazam = () => Promise.resolve(api.shazamStatus?.()).then(status => {
+    if (status && !status.error) setShazam(status)
+  }).catch(() => {})
+  useEffect(() => {
+    refreshShazam()
+    window.addEventListener('lokal:shazam', refreshShazam)
+    return () => window.removeEventListener('lokal:shazam', refreshShazam)
+  }, [])
 
   const refreshDiscord = () => Promise.resolve(api.discordStatus?.()).then(status => setDiscord(d => ({ ...d, connected: !!status?.connected }))).catch(() => {})
   useEffect(() => { if (api.isElectron) refreshDiscord() }, [])
@@ -131,6 +147,7 @@ export default function ProviderConnections({ compact = false, settingsOverride 
     }
     refreshListenBrainz()
     refreshBeatport()
+    refreshShazam()
     if (api.isElectron) refreshDiscord()
   }
 
@@ -184,6 +201,12 @@ export default function ProviderConnections({ compact = false, settingsOverride 
     await Promise.resolve(api.beatportDisconnect()).catch(() => {})
     refreshBeatport()
     window.dispatchEvent(new Event('lokal:beatport'))
+  }
+
+  const disconnectShazam = async () => {
+    if (!window.confirm('Unlink Apple Music from Shazam? This also unlinks it from Followed artists.')) return
+    await Promise.resolve(api.shazamDisconnect('apple')).catch(() => {})
+    window.dispatchEvent(new Event('lokal:shazam'))
   }
 
   const disconnectYouTube = async () => {
@@ -245,6 +268,12 @@ export default function ProviderConnections({ compact = false, settingsOverride 
           {beatport?.connected && <ActionButton onClick={disconnectBeatport} muted>Disconnect</ActionButton>}
         </AccountCard>
 
+        <AccountCard icon={Radar} tint="bg-sky-400/10 text-sky-300" name="Shazam" connected={!!shazam?.connected}
+          status={shazamStatus(shazam)}>
+          <ActionButton onClick={() => setSignIn('shazam')}><LogIn size={13} />{shazam?.apple ? 'Relink Apple Music' : 'Link Apple Music'}</ActionButton>
+          {shazam?.apple && <ActionButton onClick={disconnectShazam} muted>Disconnect</ActionButton>}
+        </AccountCard>
+
         <AccountCard icon={YoutubeIcon} tint="bg-red-600/10 text-red-300" name="YouTube Music" connected={youtubeConnected}
           note={youtubeState.tone === 'error' ? youtubeState.message : youtubeStatus.error}
           status={!api.isElectron ? t('Available in the desktop app') : youtubeConnected ? t('Connected') : youtubeAccountReady ? youtubeStatus.error ? t('Needs signing in again') : t('Not verified') : t('Not connected')}>
@@ -263,6 +292,7 @@ export default function ProviderConnections({ compact = false, settingsOverride 
       </div>
       <LastfmSignInModal open={signIn === 'lastfm'} onClose={() => setSignIn(null)} settings={settings} onConnected={changeSettings} />
       <ListenBrainzSignInModal open={signIn === 'listenbrainz'} onClose={() => setSignIn(null)} onConnected={refreshListenBrainz} />
+      <ShazamSignInModal open={signIn === 'shazam'} onClose={() => setSignIn(null)} onConnected={() => window.dispatchEvent(new Event('lokal:shazam'))} />
       <BeatportSignInModal open={signIn === 'beatport'} onClose={() => setSignIn(null)} onConnected={() => { refreshBeatport(); window.dispatchEvent(new Event('lokal:beatport')) }} />
     </div>
   )
