@@ -30,8 +30,23 @@ function trackErrors(db) {
  */
 // Sorts the library asks for; anything else falls back to the default
 // rather than reaching ORDER BY (the web route passes the query string).
-const SORT = /^(id|added_at|title|artist|album|album_artist|play_count|duration|year|last_modified|bitrate|track_num)(\s+(ASC|DESC))?$/i
-const safeSort = value => SORT.test(String(value || '').trim()) ? String(value).trim() : 'added_at DESC'
+const SORT = /^(id|added_at|title|artist|album|album_artist|play_count|duration|year|last_modified|bitrate|track_num|tempo|camelot)(\s+(ASC|DESC))?$/i
+// Tempo and key: songs without one last, whichever the direction. The key
+// goes round the Camelot wheel (1A, 1B, 2A... 12B), from track_key/mode
+// (see electron/mixing/camelot.js).
+const { MAJOR, MINOR } = require('./mixing/camelot')
+const CAMELOT_ORDER = `(CASE WHEN mode = 1 THEN (CASE track_key ${MAJOR.map((num, root) => `WHEN ${root} THEN ${num * 2 + 1}`).join(' ')} END) WHEN mode = 0 THEN (CASE track_key ${MINOR.map((num, root) => `WHEN ${root} THEN ${num * 2}`).join(' ')} END) END)`
+const SORT_SQL = {
+  tempo: direction => `COALESCE(tempo, 0) <= 0, tempo ${direction}`,
+  camelot: direction => `${CAMELOT_ORDER} IS NULL, ${CAMELOT_ORDER} ${direction}`,
+}
+function safeSort(value) {
+  const match = SORT.exec(String(value || '').trim())
+  if (!match) return 'added_at DESC'
+  const column = match[1].toLowerCase()
+  const direction = (match[3] || 'ASC').toUpperCase()
+  return SORT_SQL[column] ? SORT_SQL[column](direction) : `${column} ${direction}`
+}
 const truthy = value => value === true || value === 'true' || value === '1' || value === 1
 
 function listTracks(db, opts, { where, params, exists }) {

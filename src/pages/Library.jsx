@@ -303,6 +303,9 @@ export default function Library() {
             <option value="artist ASC">{t("Artist A-Z")}</option>
             <option value="play_count DESC">{t("Most Played")}</option>
             <option value="duration DESC">{t("Longest")}</option>
+            <option value="tempo ASC">{t("BPM, slowest first")}</option>
+            <option value="tempo DESC">{t("BPM, fastest first")}</option>
+            <option value="camelot ASC">{t("Key (Camelot)")}</option>
           </select>
           <div className="flex bg-elevated border border-border rounded-lg overflow-hidden">
             <button onClick={() => setView('list')} aria-label={t("List view")} className={`p-1.5 transition-colors ${view === 'list' ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}><List size={14} /></button>

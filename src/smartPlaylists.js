@@ -11,6 +11,20 @@ const KEY_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap(num => [
   [`${num}B`, `${num}B (${NOTES[CAMELOT_MAJOR.indexOf(num)]} major)`],
 ])
 
+/**
+ * A stored key (root pitch class, C = 0; mode 1 major, 0 minor) on the
+ * Camelot wheel: { code: '8A', num: 8, letter: 'A', name: 'A minor', order }
+ * (order sorts the wheel 1A, 1B, 2A...), or null when it isn't known.
+ */
+export function camelotKey(root, mode) {
+  const r = Number(root)
+  const m = Number(mode)
+  if (root == null || root === '' || mode == null || mode === '' || !Number.isInteger(r) || r < 0 || r > 11 || (m !== 0 && m !== 1)) return null
+  const num = m === 1 ? CAMELOT_MAJOR[r] : CAMELOT_MINOR[r]
+  const letter = m === 1 ? 'B' : 'A'
+  return { code: `${num}${letter}`, num, letter, name: `${NOTES[r]} ${m === 1 ? 'major' : 'minor'}`, order: num * 2 + m }
+}
+
 /** "8A · A minor" for a stored key (root pitch class, C = 0; mode 1 major, 0 minor), or ''. */
 export function keyLabel(root, mode) {
   const r = Number(root)

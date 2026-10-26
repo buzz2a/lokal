@@ -60,4 +60,4 @@ function harmonic(a, b) {
   return Math.max(0, 0.3 - dist * 0.04)
 }
 
-module.exports = { camelotOf, parseCamelot, format, keyOf, mixesWith, harmonic }
+module.exports = { MAJOR, MINOR, camelotOf, parseCamelot, format, keyOf, mixesWith, harmonic }

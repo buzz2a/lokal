@@ -24,6 +24,8 @@ import { addToPlaylistMany, addToQueueMany, libraryTracks, playNextMany } from '
 import { trackColumnLayout, trackColumnPreferences } from '../trackColumns'
 import { useTrackColumnsStore } from '../store/trackColumns'
 import TrackColumnPicker from './TrackColumnPicker'
+import { BpmValue, KeyBadge, bpmText } from './TrackKeyBadges'
+import { camelotKey } from '../smartPlaylists'
 import { TrackSourceIcon } from './SourceIcon'
 import { openRadio } from '../radioActions'
 import DiscoveryImage from './DiscoveryImage'
@@ -861,6 +863,8 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
         {layout.number && <SortableHeader column="number" label={t("playlist number")} sort={sort} onSortChange={onSortChange} className="justify-center text-center">#</SortableHeader>}
         <span>{t(layout.album ? 'Title' : 'Title / Album')}</span>
         {layout.album && <span className="truncate">{t("Album")}</span>}
+        {layout.bpm && <SortableHeader column="bpm" label={t("BPM")} sort={sort} onSortChange={onSortChange} className="justify-end text-right">{t('BPM')}</SortableHeader>}
+        {layout.key && <SortableHeader column="key" label={t("key")} sort={sort} onSortChange={onSortChange} className="justify-center text-center">{t('Key')}</SortableHeader>}
         {layout.source && <span className="flex justify-center" title={t("Source")}><Globe size={12} aria-hidden="true" /><span className="sr-only">{t("Source")}</span></span>}
         {layout.quality && <span className="text-center">{t("Quality")}</span>}
         {extraColumns.map(column => layout[column.key] && <span key={column.key} className="truncate text-right tracking-normal">{column.label}</span>)}
@@ -983,6 +987,9 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
                     {columns.artist && track.artist && <span className="mx-1 shrink-0">·</span>}
                     <span data-inline-album className="min-w-0 flex-1 truncate" title={track.album || t('Unknown album')}>{track.album || t('Unknown album')}</span>
                   </>}
+                  {/* Asked-for tempo and key that don't fit as columns ride along here. */}
+                  {columns.bpm && !layout.bpm && bpmText(track.tempo) && <span data-inline-bpm className="ml-2 shrink-0 tabular-nums">{bpmText(track.tempo)} BPM</span>}
+                  {columns.key && !layout.key && camelotKey(track.track_key, track.mode) && <KeyBadge track={track} className="ml-2 shrink-0" />}
                 </div>
                 {extraColumns.filter(column => !layout[column.key]).map(column => <span key={column.key} className="mr-2 text-[10px] text-muted">{column.label}: {column.render(track)}</span>)}
               </div>
@@ -991,6 +998,8 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
             {layout.album && (
               <p className="truncate text-xs text-muted" title={track.album || undefined}>{track.album || '—'}</p>
             )}
+            {layout.bpm && <BpmValue track={track} className="text-right" />}
+            {layout.key && <span data-track-column="key" className="flex justify-center"><KeyBadge track={track} /></span>}
             {layout.source && <span className="flex items-center justify-center"><TrackSourceIcon track={track} addonNames={addonNames} /></span>}
             {layout.quality && (() => {
               // Same badge as the Audio Quality page; opens that page on its list.

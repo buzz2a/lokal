@@ -40,6 +40,8 @@ import { openRadio } from '../radioActions'
 import LikeBurst from './LikeBurst'
 import { losslessMenuItem } from '../quality'
 import { sideCardViewAfterTrackChange } from '../sideCardView'
+import { keyLabel } from '../smartPlaylists'
+import { bpmText } from './TrackKeyBadges'
 
 const folderPathForTrack = (trackPath, musicRoot) => {
   if (!trackPath || String(trackPath).startsWith('ghost://') || !musicRoot) return null
@@ -604,6 +606,8 @@ export default function RightSidebar() {
                           </button>
                         </div>
                       ) : <InfoRow fx={fx} label={t("Genre")} value={genre} />}
+                      <InfoRow fx={fx} label={t("BPM")} value={bpmText(currentTrack.tempo) || null} />
+                      <InfoRow fx={fx} label={t("Key")} value={keyLabel(currentTrack.track_key, currentTrack.mode) || null} />
                       <InfoRow fx={fx} label={t("Track #")} value={currentTrack.track_num ? `${currentTrack.track_num}` : null} />
                       <InfoRow fx={fx} label={t("Bitrate")} value={currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : null} />
                       {/* A stream (an addon's) has no file to measure: what the source says of it. */}

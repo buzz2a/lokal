@@ -10,6 +10,8 @@ export const TRACK_COLUMN_OPTIONS = [
   ['artwork', 'Artwork'],
   ['artist', 'Artist'],
   ['source', 'Source'],
+  ['bpm', 'BPM'],
+  ['key', 'Key'],
   ['quality', 'Quality'],
   ['added', 'Date added'],
   ['time', 'Duration'],
@@ -18,7 +20,7 @@ export const TRACK_COLUMN_OPTIONS = [
 ]
 
 export function trackColumnDefaults(showQuality = false, playlist = false) {
-  return { selection: true, number: true, artwork: true, artist: true, source: true, quality: showQuality, added: playlist, time: true, actions: true, grip: true }
+  return { selection: true, number: true, artwork: true, artist: true, source: true, bpm: false, key: false, quality: showQuality, added: playlist, time: true, actions: true, grip: true }
 }
 
 export function trackColumnPreferences(saved, showQuality = false, playlist = false) {
@@ -39,6 +41,9 @@ export function trackColumnLayout(width, columns, { playlist = false, actionSlot
   }
   // Keep selection beside the track number when there is room.
   fit('selection', 1.25, columns.selection)
+  // Tempo and key, when asked for, come first: they're what a set is built on.
+  fit('bpm', 3, columns.bpm)
+  fit('key', 3.5, columns.key)
   // Keep quality and the tiny source mark before less essential metadata.
   fit('quality', 4.5, columns.quality)
   fit('source', 2, columns.source)
@@ -59,6 +64,8 @@ export function trackColumnLayout(width, columns, { playlist = false, actionSlot
     visible.number && '2rem',
     'minmax(0,3fr)',
     visible.album && 'minmax(0,2fr)',
+    visible.bpm && '3rem',
+    visible.key && '3.5rem',
     visible.source && '2rem',
     visible.quality && '4.5rem',
     ...extraColumns.map(column => visible[column.key] && `${column.width || 5.5}rem`),
