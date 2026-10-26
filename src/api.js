@@ -410,6 +410,7 @@ export const api = {
   downloadYT: (url, o) => isE() ? el().downloadYT(url, o) : apiFetch('/download', { method:'POST', body:{url,...o} }),
   // Online results (YouTube Music 'yt', SoundCloud 'sc'), streamed with the user's yt-dlp.
   onlineSearch: (q, provider = 'yt') => isE() ? el().onlineSearch(q, provider) : apiFetch(`/online/search?${new URLSearchParams({ q, provider })}`),
+  globalCatalogueSearch: (q, options = {}) => isE() ? el().globalCatalogueSearch(q, options) : apiFetch(`/online/global?${new URLSearchParams({ q, ...options })}`),
   onlineSave: (items) => isE() ? el().onlineSave(items) : apiFetch('/online/save', { method:'POST', body:{ items } }),
   onlinePrepare: async (provider, id, force = false, options = {}) => {
     const started = await (isE() ? el().onlinePrepare(provider, id, force) : apiFetch(`/online/prepare/${encodeURIComponent(provider)}/${encodeURIComponent(id)}${force ? '?force=1' : ''}`, { method:'POST' }))
@@ -523,6 +524,9 @@ export const api = {
   },
   clearFinishedDownloads: () => isE() ? el().clearFinishedDownloads() : apiFetch('/download/clear-finished', { method:'POST', body:{} }),
   markDownloadsSeen: () => isE() ? el().markDownloadsSeen() : apiFetch('/download/seen', { method:'POST', body:{} }),
+  storageLocations: () => isE() ? el().storageLocations() : Promise.resolve(null),
+  chooseStorageLocation: (kind) => isE() ? el().chooseStorageLocation(kind) : Promise.resolve(null),
+  resetStorageLocation: (kind) => isE() ? el().resetStorageLocation(kind) : Promise.resolve(null),
   cacheUsage: () => isE() ? el().cacheUsage() : Promise.resolve(null),
   cacheTrim: () => isE() ? el().cacheTrim() : Promise.resolve(null),
   cacheClear: () => isE() ? el().cacheClear() : Promise.resolve(null),

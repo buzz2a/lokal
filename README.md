@@ -5,7 +5,7 @@
 
 **Your music, your files, a modern player.** Lokal is a local-first music player built with Electron and React, for people with big local libraries who want the polish of a streaming app without the subscription: word-by-word synced lyrics, official music videos synced to your files, new releases from the artists you follow, listening recaps, recommendations from Last.fm or YouTube Music, smart playlists, an audio-quality checker, and one search bar that finds, streams and downloads.
 
-![Lokal Music](https://img.shields.io/badge/version-11.3.2-blue) ![Electron](https://img.shields.io/badge/Electron-latest-47848F) ![React](https://img.shields.io/badge/React-19-61DAFB) ![License](https://img.shields.io/badge/license-MIT-green) [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.gg/Wv3zfpG6UT)
+![Lokal Music](https://img.shields.io/badge/version-12.0.6-blue) ![Electron](https://img.shields.io/badge/Electron-latest-47848F) ![React](https://img.shields.io/badge/React-19-61DAFB) ![License](https://img.shields.io/badge/license-MIT-green) [![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white)](https://discord.com/invite/8bUGWChwpG)
 
 ![Lokal's home page: mixes built from your listening, the song playing in the side panel, and its audio quality under the artist](docs/screenshots/home.webp)
 
@@ -14,13 +14,13 @@
 ---
 ## Before reading further, check the common links:
 
->Download the [latest up-to-date release.](https://github.com/sipbuu/lokal/releases/latest) Windows releases are code-signed through [SignPath Foundation](https://signpath.org/) (see the [code signing policy](#code-signing-policy)).
+>Download the [latest up-to-date release.](https://github.com/lokal-music/lokal/releases/latest) Windows releases are code-signed through [SignPath Foundation](https://signpath.org/) (see the [code signing policy](#code-signing-policy)).
 
 >If you are wondering why you have to create an account or other general questions, please [read the FAQ](./FAQ.md).
 
 >Interested in creating TTML lyrics? Check out [our side TTML editor!](https://github.com/sipbuu/lokal-ttml)
 
->See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) for known issues, and report any [issues/bugs](https://github.com/sipbuu/lokal/issues) you find.
+>See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) for known issues, and report any [issues/bugs](https://github.com/lokal-music/lokal/issues) you find.
 
 >Read the [contribution guide](./CONTRIBUTING.md) if you'd like to help!
 ---
@@ -326,7 +326,7 @@ Everything is connected from **Settings → Integrations → Account Connections
 ## Getting Started
 
 ```bash
-git clone https://github.com/sipbuu/lokal/
+git clone https://github.com/lokal-music/lokal/
 cd lokal
 npm install
 ```

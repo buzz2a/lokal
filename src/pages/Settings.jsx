@@ -2,6 +2,7 @@ import OutputPrecisionSettings from '../components/OutputPrecisionSettings'
 import { usePanelWidths } from '../panelWidths.jsx'
 import { KEYBOARD_SHORTCUTS } from '../useKeyboardShortcuts'
 import SplitWordsSettings from '../components/SplitWordsSettings'
+import { normalizeSidebarCardLayout } from '../sideCardView'
 import { collectLocalPrefs, restoreLocalPrefs } from '../localPrefsBackup'
 import AppTabsSettings from '../components/AppTabsSettings'
 import { APP_LANGUAGES, useTranslation } from '../i18n'
@@ -379,6 +380,44 @@ export default function Settings() {
   // ListenBrainz: its token is saved only once ListenBrainz confirms it.
   const [lbStatus, setLbStatus] = useState(null)
   const [cacheInfo, setCacheInfo] = useState(null) // { motion, playback, musicVideo, web, limit, limits } | { busy }
+  const [storageLocations, setStorageLocations] = useState(null)
+  const [storageBusy, setStorageBusy] = useState('')
+  const [storageError, setStorageError] = useState('')
+  useEffect(() => {
+    if (!api.isElectron) return
+    let active = true
+    Promise.resolve(api.storageLocations?.()).then(value => {
+      if (active && value && !value.error) setStorageLocations(value)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
+  const changeStorageLocation = async (kind, reset = false) => {
+    if (storageBusy) return
+    setStorageBusy(kind)
+    setStorageError('')
+    try {
+      const result = await (reset
+        ? api.resetStorageLocation(kind)
+        : api.chooseStorageLocation(kind))
+      if (result?.error) throw new Error(result.error)
+      if (!result || result.canceled) return
+      const key = kind === 'cache' ? 'cache_root' : 'download_root'
+      // IPC has already validated the drive and committed to SQLite.
+      // Avoid a second unvalidated settings write.
+      touchedSettingsRef.current.add(key)
+      setSettings(previous => ({ ...previous, [key]: result.root || '' }))
+      setStorageLocations(previous => ({ ...previous, [kind]: result.root || '' }))
+      // Keep the shared settings snapshot consistent with this separately
+      // validated IPC write; other screens consult it without reopening Settings.
+      await Promise.resolve(api.getSettings?.()).catch(() => {})
+      if (kind === 'cache') refreshCache()
+    } catch (error) {
+      setStorageError(error?.message || String(error))
+    } finally {
+      setStorageBusy('')
+    }
+  }
+
   const refreshCache = () => { Promise.resolve(api.cacheUsage?.()).then(info => { if (info && !info.error) setCacheInfo(info) }).catch(() => {}) }
   const setCacheLimit = async (mb) => {
     await Promise.resolve(api.saveSettings({ cache_limit_mb: String(mb) })).catch(() => {})
@@ -675,7 +714,7 @@ export default function Settings() {
         // Nightlies aren't offered the stable release; they update by hand.
         setUpdateCheckResult('')
         setCheckingUpdate(false)
-        api.openExternal('https://github.com/sipbuu/lokal/releases')
+        api.openExternal('https://github.com/lokal-music/lokal/releases')
         return
       }
       setUpdateCheckResult(t('Checking for updates...'))
@@ -1064,12 +1103,27 @@ export default function Settings() {
     else if (toolsErrorTool === 'ffmpeg') downloadFfmpegTool()
   }
 
-  const setCustomToolPath = async (tool) => {
-    const fp = await api.openFile()
-    if (fp) {
-      await api.setCustomToolPath(tool, fp)
-      api.getToolsStatus().then(setToolsStatus)
-    }
+  const setCustomToolPath = async (tool, reset = false) => {
+    if (toolsLoading) return
+    // The general image picker excludes executable files by default.
+    const fp = reset ? '' : await api.openFile({
+      filters: [{ name: 'Executables', extensions: ['exe', 'bin', 'sh', 'AppImage'] }, { name: 'All Files', extensions: ['*'] }],
+    })
+    if (!reset && !fp) return
+    setToolsLoading(true)
+    setToolsError('')
+    setToolsErrorTool(null)
+    try {
+      const result = await api.setCustomToolPath(tool, fp)
+      if (result?.error) {
+        setToolsError(`${tool}: ${result.error}`)
+        return
+      }
+      const status = await api.getToolsStatus()
+      if (status && !status.error) setToolsStatus(status)
+    } catch (error) {
+      setToolsError(`${tool}: ${error?.message || 'Could not select this executable'}`)
+    } finally { setToolsLoading(false) }
   }
 
   const handlePlatformFileSelect = async () => {
@@ -1400,7 +1454,27 @@ activeCategory === 'data' ? usersTried
             )}
           </div>
         </Row>
-        <Row label={t("Download Folder")} desc={t("Optional folder inside your music library. Downloads are moved there and numbered in that folder; leave blank to keep the usual artist/album layout.")}>
+        {api.isElectron && (
+          <Row label={t("Download Location")} stacked desc={t("Choose a drive and folder for new music downloads. Existing files are not moved. The Download Folder option below creates a subfolder inside this location.")}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 flex-1 break-all text-xs text-white">
+                {settings.download_root || t("Default music library location")}
+              </span>
+              <button type="button" disabled={!!storageBusy} onClick={() => changeStorageLocation('downloads')}
+                className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-white hover:border-accent/40 disabled:opacity-40">
+                {storageBusy === 'downloads' ? t("Selecting…") : t("Choose folder")}
+              </button>
+              {!!settings.download_root && (
+                <button type="button" disabled={!!storageBusy} onClick={() => changeStorageLocation('downloads', true)}
+                  className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">
+                  {t("Use default")}
+                </button>
+              )}
+            </div>
+            {!!storageError && <p role="alert" className="text-xs text-red-400">{storageError}</p>}
+          </Row>
+        )}
+        <Row label={t("Download Folder")} desc={t("Optional subfolder inside the chosen download location (or music library by default). Leave blank to use artist/album folders.")}>
           <input type="text" value={settings.download_folder || ''} onChange={e => set('download_folder', e.target.value)}
             placeholder={t("e.g. Downloads")} aria-label={t("Download Folder")}
             className="w-52 max-w-full bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50" />
@@ -1917,7 +1991,10 @@ activeCategory === 'data' ? usersTried
                 <button onClick={() => downloadYtDlpTool()} disabled={toolsLoading} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">
                   {toolsLoading ? progressLabel('yt-dlp') : toolsStatus?.ytdlp?.found ? t('Update / Re-download') : t('Download')}
                 </button>
-                <button onClick={() => setCustomToolPath('yt-dlp')} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white">{t("Custom Path")}</button>
+                <button onClick={() => setCustomToolPath('yt-dlp')} disabled={toolsLoading} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">{t("Custom Path")}</button>
+                {toolsStatus?.ytdlp?.customPath && (
+                  <button onClick={() => setCustomToolPath('yt-dlp', true)} disabled={toolsLoading} className="px-2 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">{t("Automatic")}</button>
+                )}
               </div>
             </div>
             {toolsStatus?.ytdlp?.path && (
@@ -1936,7 +2013,10 @@ activeCategory === 'data' ? usersTried
                 <button onClick={() => downloadFfmpegTool()} disabled={toolsLoading} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">
                   {toolsLoading ? progressLabel('ffmpeg') : toolsStatus?.ffmpeg?.found ? t('Re-download') : t('Download')}
                 </button>
-                <button onClick={() => setCustomToolPath('ffmpeg')} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white">{t("Custom Path")}</button>
+                <button onClick={() => setCustomToolPath('ffmpeg')} disabled={toolsLoading} className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">{t("Custom Path")}</button>
+                {toolsStatus?.ffmpeg?.customPath && (
+                  <button onClick={() => setCustomToolPath('ffmpeg', true)} disabled={toolsLoading} className="px-2 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">{t("Automatic")}</button>
+                )}
               </div>
             </div>
             {toolsStatus?.ffmpeg?.path && (
@@ -1948,6 +2028,18 @@ activeCategory === 'data' ? usersTried
         </Section>
       )}
 
+      {inCategory('addons') && (
+      <Section title={t("Global catalogue")}>
+        <Row label={t("Global search results")} desc={t("Choose where Lokal finds songs, albums and artists. Playback still follows Playback Source Priority; Spotify uses your existing cookie, and Apple Music works without an account.")}>
+          <select value={settings.global_catalogue_source === 'spotify' ? 'spotify' : 'apple'} onChange={e => set('global_catalogue_source', e.target.value)}
+            aria-label={t("Global search catalogue")} className="min-w-40 rounded-lg border border-border bg-card px-3 py-2 text-sm text-white outline-none focus:border-accent/50">
+            <option value="apple">{t("Apple Music")}</option>
+            <option value="spotify">{t("Spotify")}</option>
+          </select>
+        </Row>
+        {settings.global_catalogue_source === 'spotify' && !settings.spotify_sp_dc && <p className="text-xs text-muted">{t("Spotify needs a connected account in Integrations. Until then, Global results use Apple Music.")}</p>}
+      </Section>
+      )}
       {inCategory('addons') && (
       <Section title={t("Addons")}>
         <AddonsSettings />
@@ -2447,6 +2539,36 @@ activeCategory === 'data' ? usersTried
           )}
           </div>
         </Row>
+        <Row
+          label={t("Sidebar Cards")}
+          desc={t("Fused: show track details and synchronized lyrics together in Now Playing when lyrics exist. Independent: switch between the two cards as before. This does not change Queue or the full-height Lyrics panel.")}
+        >
+          <div role="group" aria-label={t("Sidebar Cards")} className="flex gap-0.5 p-0.5 bg-card rounded-lg border border-border/50">
+            {[['fused', 'Fused'], ['independent', 'Independent']].map(([value, label]) => {
+              const current = normalizeSidebarCardLayout(
+                settings.sidebar_card_layout ?? (() => {
+                  try { return localStorage.getItem('lokal-sidebar-cards') } catch { return null }
+                })(),
+              )
+              return (
+                <button
+                  type="button"
+                  key={value}
+                  aria-pressed={current === value}
+                  onClick={() => {
+                    set('sidebar_card_layout', value)
+                    try { localStorage.setItem('lokal-sidebar-cards', value) } catch {}
+                    // The sidebar must react immediately without remounting.
+                    window.dispatchEvent(new CustomEvent('lokal:sidebar-card-layout-changed', { detail: value }))
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-display uppercase tracking-wider transition-colors ${current === value ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}
+                >
+                  {t(label)}
+                </button>
+              )
+            })}
+          </div>
+        </Row>
         <Row label={t("Open the Side Panel on Play")} desc={t("Open the side panel when you start a song, album or playlist.")}>
           <button
             onClick={() => { const v = !autoOpenSidePanel; setAutoOpenSidePanel(v); set('auto_open_side_panel', v ? '1' : '0') }}
@@ -2580,15 +2702,33 @@ activeCategory === 'data' ? usersTried
 
       {api.isElectron && inCategory('data') && (
       <Section title={t("Cache")}>
-         <Row label={t("Cache Size Limit")} desc={t("Moving covers, converted copies of songs (Apple Lossless, WMA…) and songs converted for casting are kept so they load faster. Past this size, the oldest are removed. Downloaded videos are kept in your Videos folder.")}>
+        <Row label={t("Cache Location")} stacked desc={t("Choose a disk for moving covers, converted audio and other Lokal media caches. New cache files use this folder; existing caches are not moved. Chromium web cache and sign-in data stay in the application data directory.")}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 break-all text-xs text-white">
+              {settings.cache_root || storageLocations?.defaultCache || t("Default application data location")}
+            </span>
+            <button type="button" disabled={!!storageBusy} onClick={() => changeStorageLocation('cache')}
+              className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-white hover:border-accent/40 disabled:opacity-40">
+              {storageBusy === 'cache' ? t("Selecting…") : t("Choose folder")}
+            </button>
+            {!!settings.cache_root && (
+              <button type="button" disabled={!!storageBusy} onClick={() => changeStorageLocation('cache', true)}
+                className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted hover:text-white disabled:opacity-40">
+                {t("Use default")}
+              </button>
+            )}
+          </div>
+          {!!storageError && <p role="alert" className="text-xs text-red-400">{storageError}</p>}
+        </Row>
+         <Row label={t("Cache Size Limit")} desc={t("Moving covers, converted copies of songs (Apple Lossless, WMA…) and songs converted for casting are kept so they load faster. Past this size, the oldest are removed. Downloaded videos use your selected download drive (or the Videos folder by default).")}>
           <select aria-label={t("Cache size limit")} value={String(Math.round((cacheInfo?.limit || 4096 * 1048576) / 1048576))} onChange={e => setCacheLimit(Number(e.target.value))}
             className="bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50">
             {(cacheInfo?.limits || [512, 1024, 2048, 4096, 8192, 16384]).map(mb => <option key={mb} value={String(mb)}>{mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`}</option>)}
           </select>
         </Row>
-         <Row label={t("In Use")} desc={cacheInfo ? t('Older video downloads {video} · Moving covers {covers} · Playable copies {playback} · Web cache {web}', { video: fmtBytes(cacheInfo.musicVideo), covers: fmtBytes(cacheInfo.motion), playback: fmtBytes(cacheInfo.playback), web: fmtBytes(cacheInfo.web) }) : t('Measuring…')}>
+         <Row label={t("In Use")} desc={cacheInfo ? t('Video cache {video} · Moving covers {covers} · Playable copies {playback} · Add-on audio {addons} · Web cache {web}', { video: fmtBytes(cacheInfo.musicVideo), covers: fmtBytes(cacheInfo.motion), playback: fmtBytes(cacheInfo.playback), addons: fmtBytes(cacheInfo.addonAudio), web: fmtBytes(cacheInfo.web) }) : t('Measuring…')}>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-white font-display">{cacheInfo ? fmtBytes((cacheInfo.motion || 0) + (cacheInfo.playback || 0) + (cacheInfo.musicVideo || 0) + (cacheInfo.cast || 0) + (cacheInfo.web || 0)) : '—'}</span>
+            <span className="text-sm text-white font-display">{cacheInfo ? fmtBytes((cacheInfo.motion || 0) + (cacheInfo.playback || 0) + (cacheInfo.musicVideo || 0) + (cacheInfo.addonAudio || 0) + (cacheInfo.cast || 0) + (cacheInfo.web || 0)) : '—'}</span>
             <button onClick={clearCache} disabled={!cacheInfo || cacheInfo.busy}
               className="px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border border-border text-muted hover:text-white disabled:opacity-50 transition-colors">
               {cacheInfo?.busy ? t('Clearing…') : t('Clear Cache')}

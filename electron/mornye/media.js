@@ -5,6 +5,16 @@ const crypto = require('crypto')
 const { Readable } = require('stream')
 const { service } = require('./packages')
 const { stereoPlaybackQuality } = require('./playbackQuality')
+const { progressiveMedia } = require('./progressiveMedia')
+
+// Keep custom/isolated package-service roots working as before. Only redirect
+// persistent playable bytes when the user explicitly picked another cache disk.
+function addonAudioCache(db) {
+  const external = require('../storageLocations').savedRoot('cache')
+  return external
+    ? path.join(external, 'mornye', 'audio-cache')
+    : path.join(service(db).root, 'audio-cache')
+}
 
 const jobs = new WeakMap()
 const MIME = { flac:'audio/flac',mp3:'audio/mpeg',m4a:'audio/mp4',mp4:'audio/mp4',ogg:'audio/ogg',opus:'audio/ogg',wav:'audio/wav',webm:'audio/webm',aac:'audio/aac' }
@@ -19,7 +29,7 @@ function logFailure(db,key,id,error){
 function state(db) {let value=jobs.get(db);if(!value){value=new Map();jobs.set(db,value)}return value}
 function cacheKey(db,key,id){const addon=service(db).find(key);if(!addon?.enabled)throw new Error('Addon is not available');const quality=stereoPlaybackQuality(addon,service(db).settings(addon));return crypto.createHash('sha256').update(JSON.stringify([key,id,addon.digest,quality || null])).digest('hex')}
 function cached(db,key,id){
-  const hash=cacheKey(db,key,id),dir=path.join(service(db).root,'audio-cache')
+  const hash=cacheKey(db,key,id),dir=addonAudioCache(db)
   for(const ext of Object.keys(MIME)){const file=path.join(dir,`${hash}.${ext}`);try{if(fs.statSync(file).size){const now=new Date();fs.utimesSync(file,now,now);return {type:'file',file,mime:MIME[ext],headers:{},format:ext}}}catch{}}
   return null
 }
@@ -36,7 +46,7 @@ function prepare(db,key,id,{force=false}={}){
   // A worker that ran out of memory is retried once, in a fresh worker.
   job.promise=fetchAudio().catch(error=>{if(job.controller.signal.aborted||!/memory limit|out of memory/i.test(error?.message))throw error;logFailure(db,key,id,error);job.message='Retrying…';return fetchAudio()}).then(async result=>{
     try{
-      const dir=path.join(service(db).root,'audio-cache');await fsp.mkdir(dir,{recursive:true})
+      const dir=addonAudioCache(db);await fsp.mkdir(dir,{recursive:true})
       // Played as it arrived: the cache keeps those very bytes (a rewritten
       // copy would put a later seek at different offsets than the stream had).
       const source=job.live?.ready&&job.live.done&&fs.existsSync(job.live.file)?job.live.file:result.file
@@ -70,16 +80,27 @@ const LIVE_MIN_BYTES=64*1024
 function liveUpdate(job,{part,file,total,written,done}){
   // A new file, or a retry that started over (fewer bytes than before): a
   // new live state, so a reader of the old one stops rather than mixing them.
-  if(!job.live||job.live.part!==part||!done&&(Number(written)||0)<job.live.written)job.live={part,file,total:Number(total)||0,written:0,done:false,ready:false,checked:false}
+  if(!job.live||job.live.part!==part||!done&&(Number(written)||0)<job.live.written)job.live={part,file,total:Number(total)||0,written:0,done:false,ready:false,checked:false,format:null,mime:null}
   const live=job.live
   live.written=Math.max(live.written,Number(written)||0);if(done)live.done=true
   if(live.ready||live.checked||!live.total||live.written<LIVE_MIN_BYTES)return
   live.checked=true
   try{
-    const fd=fs.openSync(done?file:part,'r'),head=Buffer.alloc(4)
-    try{fs.readSync(fd,head,0,4,0)}finally{fs.closeSync(fd)}
-    if(head.toString('latin1')==='fLaC'&&/\.flac$/i.test(file)){live.ready=true;job.message='Playing while it downloads…';job.markLive()}
-  }catch{}
+    const fd=fs.openSync(done?file:part,'r'),head=Buffer.alloc(LIVE_MIN_BYTES)
+    let got=0
+    try{got=fs.readSync(fd,head,0,head.length,0)}finally{fs.closeSync(fd)}
+    const playable=progressiveMedia(head.subarray(0,got),file)
+    if(playable){
+      Object.assign(live,playable,{ready:true})
+      job.message='Playing while it downloads…'
+      job.markLive()
+    }
+  }catch{
+    // On Windows the writer can rename/swap its .part just as this probe
+    // opens it. An I/O race must not permanently disable streaming for this
+    // track: retry on the next actual byte-progress callback.
+    live.checked=false
+  }
 }
 async function liveResponse(job,{range,signal,mime='audio/flac'}={}){
   const live=job.live,size=live.total,slice=rangeOf(range,size)
@@ -135,7 +156,9 @@ async function resolve(db,key,id,{signal,force=false}={}){
   try{
     // Whichever comes first: the complete file, or a download that can be played as it arrives.
     await Promise.race([job.promise,job.liveReady])
-    if(job.status==='running'&&job.live?.ready)return {type:'live',job,mime:'audio/flac',headers:{},format:'flac'}
+    if(job.status==='running'&&job.live?.ready)return {
+      type:'live',job,mime:job.live.mime,headers:{},format:job.live.format,
+    }
     await job.promise
     if(job.status!=='done')throw new Error(job.error || 'Audio preparation cancelled')
     return job.result

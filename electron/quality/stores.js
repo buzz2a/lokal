@@ -17,8 +17,8 @@ const MB_GAP_MS = 1100 // MusicBrainz asks for at most one request a second
 const MAX_RELEASES = 3
 const cache = new Map() // key -> { at, value }
 
-let USER_AGENT = 'Lokal ( https://github.com/sipbuu/lokal )'
-try { USER_AGENT = `Lokal/${require('../../package.json').version} ( https://github.com/sipbuu/lokal )` } catch {}
+let USER_AGENT = 'Lokal ( https://github.com/lokal-music/lokal )'
+try { USER_AGENT = `Lokal/${require('../../package.json').version} ( https://github.com/lokal-music/lokal )` } catch {}
 
 const norm = (s) => String(s || '').toLowerCase().replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
 

@@ -1,4 +1,4 @@
-const GITHUB_URL = 'https://github.com/sipbuu/lokal'
+const GITHUB_URL = 'https://github.com/lokal-music/lokal'
 
 function text(value, fallback) {
   const valueText = typeof value === 'string' && value.trim() ? value.trim() : fallback

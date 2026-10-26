@@ -1,6 +1,6 @@
 {
   "name": "lokal-music",
-  "version": "11.3.2",
+  "version": "12.0.6",
   "description": "Local-first music player built w/ Electron and React. Designed for people with large local music libraries who'd like a modern listening experience w/o the burdens of streaming subscriptions.",
   "author": "sipbuu <97703296+sipbuu@users.noreply.github.com>",
   "main": "electron/main.js",
@@ -17,6 +17,7 @@
     "postinstall": "electron-builder install-app-deps && npm run native:prepare",
     "native:prepare": "node scripts/prepare-native.js",
     "test:home-greeting": "node --test scripts/home-greeting.test.mjs",
+    "test:search-scope": "node --test scripts/search-source-scope.test.mjs",
     "test:home-cover-flow": "node --test scripts/cover-flow.test.mjs scripts/home-cover-choice.test.mjs",
     "test:artwork-download": "node --test scripts/artwork-download.test.mjs",
     "test:artist-roles": "node --test scripts/artist-roles.test.mjs",
@@ -76,7 +77,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "sipbuu",
+      "owner": "lokal-music",
       "repo": "lokal"
     },
     "directories": {

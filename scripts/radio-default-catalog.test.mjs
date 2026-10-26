@@ -41,3 +41,40 @@ test('offline on first run: the default link is still what Settings shows, and i
   assert.equal(useRadioStore.getState().url, DEFAULT_RADIO_CATALOG_URL)
   assert.equal(useRadioStore.getState().catalog, null)
 })
+
+
+test('a saved former default keeps cached stations and refreshes from the transferred repo', async () => {
+  for (const branch of ['main', 'refs/heads/main']) {
+    reset()
+    const oldUrl = `https://raw.githubusercontent.com/sipbuu/lokal/${branch}/radios.json`
+    const cached = { stations: [{ title: 'Cached Nova' }] }
+    const loaded = []
+    api.radioGetCatalog = async () => ({ url: oldUrl, catalog: cached, updatedAt: 5 })
+    api.radioLoadCatalog = async url => {
+      loaded.push(url)
+      return { ok: true, url, catalog: cached, updatedAt: 6 }
+    }
+    await useRadioStore.getState().init()
+    assert.equal(useRadioStore.getState().url, DEFAULT_RADIO_CATALOG_URL)
+    assert.equal(useRadioStore.getState().catalog, cached)
+    assert.deepEqual(loaded, [])
+    await useRadioStore.getState().loadCatalog(oldUrl)
+    assert.deepEqual(loaded, [DEFAULT_RADIO_CATALOG_URL])
+    assert.equal(useRadioStore.getState().url, DEFAULT_RADIO_CATALOG_URL)
+  }
+})
+
+test('a former default without cached stations retries the new endpoint', async () => {
+  reset()
+  const loaded = []
+  api.radioGetCatalog = async () => ({
+    url: 'https://raw.githubusercontent.com/sipbuu/lokal/refs/heads/main/radios.json',
+    catalog: null, updatedAt: 0,
+  })
+  api.radioLoadCatalog = async url => { loaded.push(url); throw new Error('offline') }
+  await useRadioStore.getState().init()
+  await wait()
+  assert.deepEqual(loaded, [DEFAULT_RADIO_CATALOG_URL])
+  assert.equal(useRadioStore.getState().url, DEFAULT_RADIO_CATALOG_URL)
+  assert.equal(useRadioStore.getState().catalog, null)
+})

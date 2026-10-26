@@ -29,6 +29,7 @@ import { camelotKey } from '../smartPlaylists'
 import { TrackSourceIcon } from './SourceIcon'
 import { openRadio } from '../radioActions'
 import DiscoveryImage from './DiscoveryImage'
+import QualityImage from './QualityImage'
 import { playRecommendationPool } from '../recommendationPlayback'
 import { playbackFallbackMessage } from '../recommendations'
 import { navigateToTrackAlbum } from '../playbackContext'
@@ -109,7 +110,8 @@ function RowArt({ src, fallback }) {
   useEffect(() => { setFailed(0) }, [candidates])
   const current = candidates[failed]
   if (!current) return <div className="w-full h-full flex items-center justify-center text-muted"><Music size={11} /></div>
-  return <img key={current} src={current} onError={() => setFailed(n => n + 1)} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
+  // Each candidate tries its larger renditions first (QualityImage), then the next one.
+  return <QualityImage key={current} src={current} onError={() => setFailed(n => n + 1)} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
 }
 
 export default function TrackList({ tracks = [], showQuality = false, onRemove = null, showPlayNext = true, showAddToQueue = true, playlistId = null, onReorder = null, onQuickAdd = null, reduceMotion = false, context = null, highlightTrackId = null, highlightRequestKey = null, extraColumns = [], resolveTracks = null, sort = null, onSortChange = null, trackNumbers = null, toolbarStart = null }) {

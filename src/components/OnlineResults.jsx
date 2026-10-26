@@ -17,10 +17,8 @@ import { awaitAtmosOutputRelease, shouldToggleNormalStream } from '../audio/atmo
 import { recentTrackItem, saveRecentItem, saveRecentSearch } from '../searchHistory'
 import SaveToLibraryButton from './SaveToLibraryButton'
 import SoulseekSearch from './SoulseekSearch'
-import OnlineCollections from './OnlineCollections'
 import DownloadNotices from './DownloadNotices'
 import SourceIcon from './SourceIcon'
-import AddonCollections from './AddonCollections'
 import AddonSetupNotice from './AddonSetupNotice'
 import { DEFAULT_SEARCH_SOURCES, orderedFindOnSources } from '../findOnSources'
 import { useTranslation } from '../i18n'
@@ -71,7 +69,7 @@ function useProviders() {
  *                     in lossless"): Soulseek is shown, and the file picked
  *                     there replaces the stream / the track's file
  */
-export default function OnlineResults({ query, soulseekFor = null, findOn = null }) {
+export default function OnlineResults({ query, soulseekFor = null, findOn = null, showLibraryHint = true }) {
   const { t } = useTranslation()
   // YouTube Music and SoundCloud, then Soulseek, then installed addons.
   const loaded = useProviders()
@@ -221,7 +219,7 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
             ))}
           </div>
         </div>
-        <span className="min-w-0 text-[10px] text-muted/80 truncate">{t(soulseek ? 'Files people share, through slskd' : providers.find(p => p.id === provider)?.addon ? 'From an add-on you installed' : 'Streams with yt-dlp')}{t(' · not in your library')}</span>
+        <span className="min-w-0 text-[10px] text-muted/80 truncate">{t(soulseek ? 'Files people share, through slskd' : providers.find(p => p.id === provider)?.addon ? 'From an add-on you installed' : 'Streams with yt-dlp')}{showLibraryHint ? t(' · not in your library') : ''}</span>
       </div>
       <div className="mb-3 empty:hidden"><DownloadNotices youtube={provider === 'yt'} /></div>
       {!soulseek && <AddonSetupNotice source={providers.find(p => p.id === provider)} className="mb-3" />}
@@ -296,8 +294,6 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
             )
           })}
         </div>
-        {provider === 'yt' && <OnlineCollections query={q} />}
-        {providers.find(source => source.id === provider)?.package && <AddonCollections key={provider} query={q} source={providers.find(source => source.id === provider)} />}
         </>
       )}
     </section>

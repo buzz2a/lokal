@@ -57,6 +57,7 @@ export default function Library() {
   const [simpleSearch, setSimpleSearch] = useCachedState('library:simpleSearch', '')
   const [debouncedSimpleSearch, setDebouncedSimpleSearch] = useState(() => simpleSearch.trim())
   const [folderData, setFolderData] = useState(null)
+  const [folderViewOverride, setFolderViewOverride] = useState(null)
   const [musicRoots, setMusicRoots] = useState([])
   const [activeMusicRoot, setActiveMusicRoot] = useCachedState('library:activeMusicRoot', '')
   const [addingMusicFolder, setAddingMusicFolder] = useState(false)
@@ -91,6 +92,19 @@ export default function Library() {
   const loadMoreRef = useRef(null)
   const requestIdRef = useRef(0)
   const shouldAnimateGrid = tracks.length <= HEAVY_GRID_THRESHOLD
+  const isTrackOnlyFolder = !!folderData?.relativePath &&
+    folderData.relativePath === folderPath &&
+    folderData.folders?.length === 0 &&
+    folderData.tracks?.length > 0
+  const activeView = libraryMode === 'advanced' && isTrackOnlyFolder
+    ? (folderViewOverride?.path === folderPath ? folderViewOverride.view : 'list')
+    : view
+
+  /** Update the shared view and preserve an explicit choice for the current folder. */
+  const changeView = nextView => {
+    setView(nextView)
+    if (libraryMode === 'advanced') setFolderViewOverride({ path: folderPath, view: nextView })
+  }
 
   const addMusicFolder = async () => {
     if (!api.isElectron || addingMusicFolder) return
@@ -308,8 +322,8 @@ export default function Library() {
             <option value="camelot ASC">{t("Key (Camelot)")}</option>
           </select>
           <div className="flex bg-elevated border border-border rounded-lg overflow-hidden">
-            <button onClick={() => setView('list')} aria-label={t("List view")} className={`p-1.5 transition-colors ${view === 'list' ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}><List size={14} /></button>
-            <button onClick={() => setView('grid')} aria-label={t("Grid view")} className={`p-1.5 transition-colors ${view === 'grid' ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}><LayoutGrid size={14} /></button>
+            <button onClick={() => changeView('list')} aria-label={t("List view")} className={`p-1.5 transition-colors ${activeView === 'list' ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}><List size={14} /></button>
+            <button onClick={() => changeView('grid')} aria-label={t("Grid view")} className={`p-1.5 transition-colors ${activeView === 'grid' ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}><LayoutGrid size={14} /></button>
           </div>
         </div>
       </div>
@@ -412,7 +426,7 @@ export default function Library() {
             folderPath={folderPath}
             onFolderChange={setFolderPath}
             onDataChange={setFolderData}
-            view={view}
+            view={activeView}
             playQueue={playQueue}
             artSrc={artSrc}
             searchQuery={folderSearch}

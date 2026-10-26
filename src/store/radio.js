@@ -3,7 +3,7 @@
 
 import { create } from 'zustand'
 import { api } from '../api.js'
-import { DEFAULT_RADIO_CATALOG_URL } from '../radio/stations.js'
+import { DEFAULT_RADIO_CATALOG_URL, resolveRadioCatalogUrl } from '../radio/stations.js'
 
 export const RADIO_BUFFER_DEFAULT = 3
 export const RADIO_BUFFER_MAX = 10
@@ -30,10 +30,11 @@ export const useRadioStore = create((set, get) => ({
     if (get().ready) return
     try {
       const saved = await api.radioGetCatalog?.()
-      set({ url: saved?.url || DEFAULT_RADIO_CATALOG_URL, catalog: saved?.catalog || null, updatedAt: saved?.updatedAt || 0, ready: true })
-      // Nothing loaded yet (first run): the default list, so there are stations
+      const url = resolveRadioCatalogUrl(saved?.url)
+      set({ url, catalog: saved?.catalog || null, updatedAt: saved?.updatedAt || 0, ready: true })
+      // Nothing loaded yet: the default list, so there are stations
       // without anyone having to find a link. A failure (offline) tries again next time.
-      if (!saved?.catalog && !saved?.url) get().loadCatalog(DEFAULT_RADIO_CATALOG_URL)
+      if (!saved?.catalog && url === DEFAULT_RADIO_CATALOG_URL) get().loadCatalog(url)
     } catch {
       set({ ready: true })
     }
@@ -43,7 +44,7 @@ export const useRadioStore = create((set, get) => ({
   loadCatalog: async (url) => {
     set({ loading: true })
     try {
-      const result = await api.radioLoadCatalog(url)
+      const result = await api.radioLoadCatalog(resolveRadioCatalogUrl(url))
       if (result?.ok) set({ url: result.url, catalog: result.catalog, updatedAt: result.updatedAt, ready: true })
       return result || { ok: false, errors: [{ path: '', code: 'network' }] }
     } catch (error) {

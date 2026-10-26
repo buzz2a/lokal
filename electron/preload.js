@@ -175,6 +175,7 @@ contextBridge.exposeInMainWorld('electron', {
   
   downloadYT: (url, opts) => invoke('downloader:download', url, opts),
   onlineSearch: (query, provider) => invoke('online:search', query, provider),
+  globalCatalogueSearch: (query, options) => invoke('online:globalSearch', query, options),
   onlineSave: (items) => invoke('online:save', items),
   onlinePrepare: (provider, id, force) => invoke('online:prepare', provider, id, force),
   onlineProviders: () => invoke('online:providers'),
@@ -226,6 +227,9 @@ contextBridge.exposeInMainWorld('electron', {
   radioGetCatalog: () => invoke('radio:getCatalog'),
   radioLoadCatalog: (url) => invoke('radio:loadCatalog', url),
   radioNowPlaying: (stationApi) => invoke('radio:nowPlaying', stationApi),
+  storageLocations: () => invoke('storage:locations'),
+  chooseStorageLocation: (kind) => invoke('storage:choose', kind),
+  resetStorageLocation: (kind) => invoke('storage:reset', kind),
   cacheUsage: () => invoke('cache:usage'),
   cacheTrim: () => invoke('cache:trim'),
   cacheClear: () => invoke('cache:clear'),

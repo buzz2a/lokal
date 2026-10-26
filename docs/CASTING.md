@@ -53,7 +53,7 @@ with made-up songs and buttons for each state.
 
 ## Publishing Lokal's receiver (one time)
 
-Done once by the owner of the main repository (sipbuu/lokal), with their
+Done once by the owner of the main repository (lokal-music/lokal), with their
 GitHub and Google accounts: the receiver's address and the Cast developer
 account both belong to the project, and every copy of Lokal then uses them.
 
@@ -61,7 +61,7 @@ account both belong to the project, and every copy of Lokal then uses them.
    **GitHub Actions**. Then Actions → **Cast receiver** → Run workflow (it
    also runs on every change to `receiver/` on `main`). The receiver is then
    at `https://<owner>.github.io/<repo>/receiver/`, so for Lokal:
-   `https://sipbuu.github.io/lokal/receiver/`. Open it in a browser
+   `https://lokal-music.github.io/lokal/receiver/`. Open it in a browser
    once: a blank dark page is right (it only comes alive on a Cast device).
 2. **Register it.** At the [Google Cast SDK Developer
    Console](https://cast.google.com/publish), sign in, pay the one-time
@@ -83,6 +83,21 @@ account both belong to the project, and every copy of Lokal then uses them.
 
 Changes to `receiver/` go live when the workflow publishes them; no need to
 register again (the URL stays the same).
+
+## After the repository transfer
+
+The receiver now deploys to `https://lokal-music.github.io/lokal/receiver/`.
+GitHub repository redirects do not update the URL registered with Google Cast.
+
+1. Enable **Settings → Pages → Source: GitHub Actions** in `lokal-music/lokal`
+   and run the **Cast receiver** workflow. Verify the new receiver URL loads.
+2. In the Google Cast SDK Developer Console, edit the **existing** Lokal
+   application `2060B9B3` and change its Receiver Application URL to that new
+   address. Keep the application ID, publication and device registrations.
+   Replacing the application would leave older installed clients using the old ID.
+3. Cast from an existing and a new Lokal installation to verify that the receiver
+   opens. Until the console is updated, clients still launch whichever URL
+   Google has registered for `2060B9B3`; changing `appId.js` alone cannot move it.
 
 ## Changing the messages on Lokal's channel
 
