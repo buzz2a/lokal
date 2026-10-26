@@ -3,6 +3,8 @@ import { packQueue, unpackQueue, QUEUE_KEYS } from '../queueStorage.js'
 import { isPlayable } from '../onlineTracks.js'
 import { songKey } from '../recommendations.js'
 import { CROSSFADE_DEFAULTS } from '../audio/crossfade.js'
+import { normalizeReplayGainMode } from '../audio/replayGain.mjs'
+import { isStationTrack } from '../radio/stations.js'
 
 // Only used by toggleMiniPlayer's setWindowSize/setAlwaysOnTop fallback path
 // below (when window.electron.setMiniMode isn't available), to remember the
@@ -59,7 +61,7 @@ async function applyMiniMode(next, electron, set) {
       return
     }
   }
-  set({ showMiniPlayer: next })
+  set({ showMiniPlayer: next, ...(next ? {} : { showMiniVisualizer: false }) })
 }
 
 // Shared by setExclusiveSidePanels (the user's Settings toggle) and
@@ -140,7 +142,6 @@ function readOutputDevice() {
   try { return localStorage.getItem('lokal-output-device') || 'default' } catch { return 'default' }
 }
 
-const normalizeReplayGainMode = value => ['off', 'track', 'album'].includes(value) ? value : 'off'
 function readReplayGainModeSetting() {
   try { return normalizeReplayGainMode(localStorage.getItem('lokal-replaygain-mode')) } catch { return 'off' }
 }
@@ -229,10 +230,12 @@ export const usePlayerStore = create((set, get) => ({
   playNextIds: [],
   playbackContext: null,
   isPlaying: false, isBuffering: false, progress: 0, duration: 0,
+  // Request-scoped startup progress; survives provider fallback within one queue entry.
+  streamLoading: null,
   volume: parseFloat(localStorage.getItem('lokal-volume') || '0.8'),
   shuffle: false, repeat: 'none',
   showLyrics: false, showLyricsFullscreen: false,
-  showRightSidebar: false, showFullscreen: false, showQueue: false, showLyricsPanel: false,
+  showRightSidebar: false, showFullscreen: false, showFullscreenVisualizer: false, showMiniVisualizer: false, showQueue: false, showLyricsPanel: false,
   // Which content the right-hand panel shows. Only meaningful in merged
   // mode -- independent mode's Queue lives in its own separate panel and
   // never touches this.
@@ -286,7 +289,7 @@ export const usePlayerStore = create((set, get) => ({
     set({ replayGainMode: mode, replayGainModeUserSet: true })
   },
   hydrateReplayGainMode: (value) => {
-    if (get().replayGainModeUserSet || !['off', 'track', 'album'].includes(value)) return
+    if (get().replayGainModeUserSet || !['off', 'track', 'album', 'smart'].includes(value)) return
     const mode = normalizeReplayGainMode(value)
     try { localStorage.setItem('lokal-replaygain-mode', mode) } catch {}
     set({ replayGainMode: mode })
@@ -521,6 +524,10 @@ export const usePlayerStore = create((set, get) => ({
   },
 
   autoNext: () => {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('lokal-autoplay') === '0') {
+      set({ isPlaying: false, progress: 0 })
+      return
+    }
     const { shuffle, shuffleQueue, shuffleIndex, queue, queueIndex, repeat, playHistory } = get()
     
     if (shuffle && shuffleQueue.length > 0) {
@@ -579,9 +586,11 @@ export const usePlayerStore = create((set, get) => ({
       progress, audioRef, cfAudioRef, activeAudioElement, playHistory, futureHistory
     } = get()
     const activeRef = activeAudioElement === 'primary' ? audioRef : cfAudioRef
-    
-    if (progress > 3 && outputRoute) { outputRoute.seek(0); set({ progress: 0 }); return }
-    if (progress > 3 && activeRef?.current) {
+    // A radio station is live: back means the previous station, never "restart".
+    const live = isStationTrack(get().currentTrack)
+
+    if (progress > 3 && !live && outputRoute) { outputRoute.seek(0); set({ progress: 0 }); return }
+    if (progress > 3 && !live && activeRef?.current) {
       activeRef.current.currentTime = 0
       return
     }
@@ -839,56 +848,114 @@ export const usePlayerStore = create((set, get) => ({
   addToQueue: (track) => {
     const playableTrack = sanitizeSingleTrack(track)
     if (!playableTrack) return
-    const { shuffle, shuffleQueue, queue } = get()
-    
-    if (shuffle && shuffleQueue.length > 0) {
-      set({ shuffleQueue: [...shuffleQueue, playableTrack] })
+    const { shuffle, shuffleQueue, queue, originalQueue } = get()
+
+    if (shuffle) {
+      const nextQueue = [...queue, playableTrack]
+      set({
+        queue: nextQueue,
+        shuffleQueue: shuffleQueue.length ? [...shuffleQueue, playableTrack] : nextQueue,
+        originalQueue: [...(originalQueue.length ? originalQueue : queue), playableTrack],
+      })
     } else {
       set({ queue: [...queue, playableTrack] })
     }
   },
 
   reorderQueue: (fromIndex, toIndex) => {
-    const { shuffle, queue, queueIndex } = get()
-    if (shuffle) return
-    
-    const newQueue = [...queue]
-    const [removed] = newQueue.splice(fromIndex, 1)
-    newQueue.splice(toIndex, 0, removed)
-    
-    let newCurrentIndex = queueIndex
-    if (fromIndex === queueIndex) {
-      newCurrentIndex = toIndex
-    } else if (fromIndex < queueIndex && toIndex >= queueIndex) {
-      newCurrentIndex--
-    } else if (fromIndex > queueIndex && toIndex <= queueIndex) {
-      newCurrentIndex++
+    const { shuffle, shuffleQueue, shuffleIndex, queue, queueIndex } = get()
+    const list = shuffle && shuffleQueue.length ? shuffleQueue : queue
+    const currentIndex = shuffle && shuffleQueue.length ? shuffleIndex : queueIndex
+    if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex) || fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length || fromIndex === toIndex) return
+
+    const reordered = [...list]
+    const [removed] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, removed)
+
+    let nextCurrentIndex = currentIndex
+    if (fromIndex === currentIndex) {
+      nextCurrentIndex = toIndex
+    } else if (fromIndex < currentIndex && toIndex >= currentIndex) {
+      nextCurrentIndex--
+    } else if (fromIndex > currentIndex && toIndex <= currentIndex) {
+      nextCurrentIndex++
     }
-    
-    set({ queue: newQueue, queueIndex: newCurrentIndex })
+
+    if (shuffle && shuffleQueue.length) set({ shuffleQueue: reordered, shuffleIndex: nextCurrentIndex })
+    else set({ queue: reordered, queueIndex: nextCurrentIndex })
   },
 
-  removeFromQueue: (trackId) => {
-    const { shuffle, shuffleQueue, shuffleIndex, queue, queueIndex, currentTrack } = get()
-    
+  removeFromQueue: (trackId, entryIndex) => {
+    const { shuffle, shuffleQueue, shuffleIndex, queue, queueIndex, originalQueue, currentTrack } = get()
+    const indexForEntry = list => Number.isInteger(entryIndex) && list[entryIndex]?.id === trackId
+      ? entryIndex
+      : list.findIndex(track => track.id === trackId)
+
     if (shuffle && shuffleQueue.length > 0) {
-      const idx = shuffleQueue.findIndex(t => t.id === trackId)
-      if (idx === shuffleIndex) return 
-      const newShuffleQueue = shuffleQueue.filter(t => t.id !== trackId)
-      const newShuffleIndex = idx < shuffleIndex ? shuffleIndex - 1 : shuffleIndex
-      set({ shuffleQueue: newShuffleQueue, shuffleIndex: newShuffleIndex })
-    } else {
-      const idx = queue.findIndex(t => t.id === trackId)
-      if (idx === queueIndex) return 
-      const newQueue = queue.filter(t => t.id !== trackId)
-      const newQueueIndex = idx < queueIndex ? queueIndex - 1 : queueIndex
-      set({ queue: newQueue, queueIndex: newQueueIndex })
+      // Queue rows are entries, not unique song IDs. Remove the requested
+      // shuffled occurrence, and keep the playing occurrence even for duplicates.
+      const idx = indexForEntry(shuffleQueue)
+      if (idx < 0 || idx === shuffleIndex) return
+
+      const currentCanonicalIndex = currentTrack?.id === trackId ? queueIndex : -1
+      const removedEntry = shuffleQueue[idx]
+      // shuffleQueue's row index is not a canonical queue index. Match the
+      // actual entry reference first so another duplicate ID isn't removed.
+      let queueRemoveIndex = queue.findIndex((track, i) => track === removedEntry && i !== currentCanonicalIndex)
+      if (queueRemoveIndex < 0) {
+        queueRemoveIndex = queue.findIndex((track, i) => track.id === trackId && i !== currentCanonicalIndex)
+      }
+
+      const newShuffleQueue = [...shuffleQueue]
+      newShuffleQueue.splice(idx, 1)
+      if (queueRemoveIndex < 0) {
+        // Support queues saved by older builds, where Add to Queue while
+        // shuffled updated only shuffleQueue.
+        const originalRemoveIndex = originalQueue.findIndex((track, i) => track.id === trackId && i !== currentCanonicalIndex)
+        const newOriginalQueue = [...originalQueue]
+        if (originalRemoveIndex >= 0) newOriginalQueue.splice(originalRemoveIndex, 1)
+        set({
+          shuffleQueue: newShuffleQueue,
+          shuffleIndex: idx < shuffleIndex ? shuffleIndex - 1 : shuffleIndex,
+          ...(originalQueue.length ? { originalQueue: newOriginalQueue } : {}),
+        })
+        return
+      }
+      const newQueue = [...queue]
+      newQueue.splice(queueRemoveIndex, 1)
+      let newOriginalQueue = originalQueue
+      if (originalQueue.length) {
+        const originalRemoveIndex = originalQueue[queueRemoveIndex]?.id === trackId
+          ? queueRemoveIndex
+          : originalQueue.findIndex((track, i) => track.id === trackId && i !== currentCanonicalIndex)
+        if (originalRemoveIndex >= 0) {
+          newOriginalQueue = [...originalQueue]
+          newOriginalQueue.splice(originalRemoveIndex, 1)
+        }
+      }
+
+      set({
+        queue: newQueue,
+        queueIndex: queueRemoveIndex < queueIndex ? Math.max(0, queueIndex - 1) : queueIndex,
+        shuffleQueue: newShuffleQueue,
+        shuffleIndex: idx < shuffleIndex ? shuffleIndex - 1 : shuffleIndex,
+        ...(originalQueue.length ? { originalQueue: newOriginalQueue } : {}),
+      })
+      return
     }
+
+    const idx = indexForEntry(queue)
+    if (idx < 0 || idx === queueIndex) return
+    const newQueue = [...queue]
+    newQueue.splice(idx, 1)
+    set({ queue: newQueue, queueIndex: idx < queueIndex ? Math.max(0, queueIndex - 1) : queueIndex })
   },
 
   setProgress: (v) => set({ progress: v }),
   setIsBuffering: (v) => set({ isBuffering: !!v }),
+  setStreamLoading: (value) => set({ streamLoading: value }),
   setProgressWithAudioUpdate: (v) => {
+    if (isStationTrack(get().currentTrack)) return // live radio: nothing to seek
     if (outputRoute) { outputRoute.seek(v); set({ progress: v }); return }
     const { audioRef, cfAudioRef, activeAudioElement } = get()
     const activeRef = activeAudioElement === 'primary' ? audioRef : cfAudioRef
@@ -942,6 +1009,8 @@ export const usePlayerStore = create((set, get) => ({
     // there's nothing left to reset here on the way out.
     return { showRightSidebar: false }
   }),
+  setShowFullscreenVisualizer: (value) => set({ showFullscreenVisualizer: !!value }),
+  setShowMiniVisualizer: (value) => set({ showMiniVisualizer: !!value }),
   toggleFullscreen: () => set(s => {
     const next = !s.showFullscreen
     if (!next && typeof window !== 'undefined' && window.electron?.refreshHitRegions) {
@@ -1125,6 +1194,10 @@ export const usePlayerStore = create((set, get) => ({
     return { likedIds: next }
   }),
   initLiked: (ids) => set({ likedIds: new Set(ids) }),
+  // Online radio: the song a station is playing now (title, artist, cover...)
+  // goes on the current entry only. The queue keeps the stations as they are,
+  // and nothing else hears about it (it isn't a library song).
+  patchStationTrack: (id, patch) => set(state => (state.currentTrack?.id === id ? { currentTrack: { ...state.currentTrack, ...patch } } : {})),
   syncTrack: (track) => { announceTrackUpdates([track]); set((state) => {
     if (!track?.id) return state
     const syncList = (list) => sanitizeTrackList(Array.isArray(list) ? list.map(item => item?.id === track.id ? { ...item, ...track } : item) : list)

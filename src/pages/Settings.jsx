@@ -1,8 +1,14 @@
 import OutputPrecisionSettings from '../components/OutputPrecisionSettings'
+import { usePanelWidths } from '../panelWidths.jsx'
+import { KEYBOARD_SHORTCUTS } from '../useKeyboardShortcuts'
+import SplitWordsSettings from '../components/SplitWordsSettings'
+import { collectLocalPrefs, restoreLocalPrefs } from '../localPrefsBackup'
+import AppTabsSettings from '../components/AppTabsSettings'
 import { APP_LANGUAGES, useTranslation } from '../i18n'
+import TvModeSettings from '../tv/TvModeSettings'
 ﻿import React, { useEffect, useLayoutEffect, useState, useRef, createContext, useContext } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Info, Tags, FolderOpen, RefreshCw, Trash2, AlertTriangle, Link, CheckCircle, Disc3, Zap, Download, Music2, X, MoreHorizontal, ListMusic, Palette, ChevronDown, ChevronUp, RefreshCcw, Image as ImageIcon, Blocks, Search } from 'lucide-react'
 import { api, peekSettings } from '../api'
 import { FORMATS, MP3_BITRATES, savedFormat } from '../downloadLinks'
@@ -22,7 +28,9 @@ import { ARTIST_SOURCES } from '../artistSources'
 import { repairMissingTracks } from '../ghostDownloads'
 import { plural } from '../plural'
 import { readCrossfadeSettings, CROSSFADE_MIN_S } from '../audio/crossfade'
+import { SPEED_MAX, SPEED_MIN, SPEED_STEP, usePlaybackSpeed } from '../playbackSpeed.mjs'
 import SoulseekSignIn from '../components/SoulseekSignIn'
+import { loadMilkDropPresetNames, normalizeEnabledMilkDropPresets } from '../visualizers/milkDropPresets.mjs'
 
 const EQ_BANDS = ['31Hz', '62Hz', '125Hz', '250Hz', '500Hz', '1kHz', '2kHz', '4kHz', '8kHz', '16kHz']
 const EQ_PRESETS = {
@@ -90,12 +98,12 @@ function fmtBytes(bytes) {
 
 // `stacked`: the control goes under the text, full width (a wide control
 // beside it would squeeze the description into a narrow column).
-function Row({ label, desc, children, stacked = false }) {
+function Row({ id, label, desc, children, stacked = false }) {
   const { t } = useTranslation()
   const { query } = useContext(SettingsSearchContext)
   const matches = !query || searchText(label, t(label), desc, t(desc)).includes(query)
   return (
-    <div data-settings-match={query && matches ? '' : undefined} className={`${stacked ? 'space-y-3' : 'flex items-center justify-between gap-6'} ${matches ? '' : 'hidden'}`}>
+    <div id={id} data-settings-match={query && matches ? '' : undefined} className={`${stacked ? 'space-y-3' : 'flex items-center justify-between gap-6'} ${matches ? '' : 'hidden'}`}>
       <div className="min-w-0 flex-1">
         <p className="text-sm text-white font-medium">{t(label)}</p>
         {desc && <p className="text-xs text-muted mt-0.5 leading-relaxed whitespace-pre-line">{t(desc)}</p>}
@@ -253,8 +261,16 @@ function withSettingDefaults(s) {
 
 export default function Settings() {
   const location = useLocation()
+  const navigate = useNavigate()
   const { t, language, setLanguage } = useTranslation()
+  const panelFreeform = usePanelWidths(s => s.freeform)
+  const setPanelFreeform = (freeform) => usePanelWidths.getState().set({ freeform })
   const replayGainMode = usePlayerStore(s => s.replayGainMode)
+  const [autoplayEnabled, setAutoplayEnabled] = useState(() => {
+    try { return localStorage.getItem('lokal-autoplay') !== '0' } catch { return true }
+  })
+  const playbackSpeed = usePlaybackSpeed(s => s.speed)
+  const setPlaybackSpeed = usePlaybackSpeed(s => s.setSpeed)
   // Seeded from the settings already read (and the version / tools found on
   // the last visit), so the first frame already has the real values: rows
   // used to appear, change text and push everything below them down.
@@ -286,6 +302,36 @@ export default function Settings() {
     }
   }, [])
   const [scanning, setScanning] = useState(false)
+  const [showVisualizerMenu, setShowVisualizerMenu] = useState(false)
+  const [milkDropPresetNames, setMilkDropPresetNames] = useState([])
+  const [milkDropPresetsLoading, setMilkDropPresetsLoading] = useState(false)
+  const [milkDropPresetLoadStarted, setMilkDropPresetLoadStarted] = useState(false)
+  const [milkDropPresetLoadError, setMilkDropPresetLoadError] = useState('')
+  const [milkDropPresetSearch, setMilkDropPresetSearch] = useState('')
+  const visualizerMenuRef = useRef(null)
+  useEffect(() => {
+    const closeOutside = event => {
+      if (!visualizerMenuRef.current?.contains(event.target)) setShowVisualizerMenu(false)
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [])
+
+  useEffect(() => {
+    if (!showVisualizerMenu || milkDropPresetLoadStarted) return
+    setMilkDropPresetLoadStarted(true)
+    setMilkDropPresetsLoading(true)
+    loadMilkDropPresetNames()
+      .then(names => {
+        setMilkDropPresetNames(names)
+        setMilkDropPresetLoadError('')
+      })
+      .catch(error => {
+        console.warn('[settings] Could not load MilkDrop presets:', error)
+        setMilkDropPresetLoadError('Could not load MilkDrop presets.')
+      })
+      .finally(() => setMilkDropPresetsLoading(false))
+  }, [showVisualizerMenu, milkDropPresetLoadStarted])
   const [showGenreModal, setShowGenreModal] = useState(false)
   const [eqGains, setEqGains] = useState(EQ_PRESETS[DEFAULT_EQ_PRESET].gains)
   const [eqPreset, setEqPreset] = useState(DEFAULT_EQ_PRESET)
@@ -398,6 +444,7 @@ export default function Settings() {
   // can't be a useRef here.
   const [appVersion, setAppVersionState] = useState(() => peekCache('settings:version') || '')
   const setAppVersion = (version) => { writeCache('settings:version', version); setAppVersionState(version) }
+  const [isWindowsStore, setIsWindowsStore] = useState(false)
   usePageReady(settingsLoaded && (!api.isElectron || (!!appVersion && !!toolsStatus)))
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateCheckResult, setUpdateCheckResult] = useState('')
@@ -472,6 +519,19 @@ export default function Settings() {
   // the next one. Start each category at the top; layout effect so the new
   // content never paints at the old offset first.
   const rootRef = useRef(null)
+  const spotifyCookieJumpRef = useRef(false)
+  const openSpotifyCookieSettings = () => {
+    spotifyCookieJumpRef.current = true
+    setSettingsQuery('')
+    setActiveCategory('integrations')
+  }
+  useEffect(() => {
+    if (activeCategory !== 'integrations' || !spotifyCookieJumpRef.current) return
+    const target = rootRef.current?.querySelector('#spotify-cookie-settings')
+    if (!target) return
+    spotifyCookieJumpRef.current = false
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [activeCategory])
   const firstCategoryRef = useRef(true)
   useLayoutEffect(() => {
     if (firstCategoryRef.current) { firstCategoryRef.current = false; return }
@@ -561,8 +621,8 @@ export default function Settings() {
 
       api.getToolsStatus().then(setToolsStatus)
       api.getVersion().then(v => setAppVersion(v || '1.0.0'))
+      api.isWindowsStore().then(store => setIsWindowsStore(!!store)).catch(() => {})
 
-      api.getPerfSettings().then(s => { if (s) setPerfSettings(p => ({ ...p, ...s })) }).catch(() => {})
     }
 
 
@@ -605,6 +665,12 @@ export default function Settings() {
     setUpdateCheckResult('')
     try {
       const result = await api.updaterCheck()
+      if (result?.store) {
+        setUpdateCheckResult('')
+        setCheckingUpdate(false)
+        await api.openExternal('ms-windows-store://downloadsandupdates')
+        return
+      }
       if (result?.nightly) {
         // Nightlies aren't offered the stable release; they update by hand.
         setUpdateCheckResult('')
@@ -641,6 +707,22 @@ export default function Settings() {
   const setPerformanceMode = (on) => savePerfField('performanceMode', on)
   const perfRestartNeeded = !!perfSettings.running && perfSettings.running.hardwareAcceleration !== perfSettings.hardwareAcceleration
 
+  useEffect(() => {
+    let revision = 0
+    let disposed = false
+    const unsubscribe = api.onPerfSettings(settings => {
+      revision++
+      if (!disposed) setPerfSettings(p => ({ ...p, ...settings }))
+    })
+    const initialRevision = revision
+    api.getPerfSettings().then(settings => {
+      if (!disposed && revision === initialRevision && settings) {
+        setPerfSettings(p => ({ ...p, ...settings }))
+      }
+    }).catch(() => {})
+    return () => { disposed = true; unsubscribe?.() }
+  }, [])
+
   // Every change saves itself (see queueSettings above).
   const set = (k, v) => {
     touchedSettingsRef.current.add(k)
@@ -650,6 +732,13 @@ export default function Settings() {
     if (k === 'replaygain_mode') usePlayerStore.getState().setReplayGainMode(v)
   }
   const crossfade = readCrossfadeSettings(settings)
+  const enabledMilkDropPresets = normalizeEnabledMilkDropPresets(
+    settings.fullscreen_milkdrop_presets,
+    milkDropPresetNames,
+  )
+  const filteredMilkDropPresetNames = milkDropPresetNames.filter(name =>
+    name.toLowerCase().includes(milkDropPresetSearch.trim().toLowerCase()),
+  )
 
   const applyEqGains = (nextGains, presetKey = getEqPresetKey(nextGains)) => {
     const normalized = normalizeEqGains(nextGains)
@@ -672,10 +761,15 @@ export default function Settings() {
   }
 
   const rescan = async () => {
-    if (!settings.music_folder) return
+    let roots = []
+    try {
+      const parsed = JSON.parse(settings.music_folders || 'null')
+      if (Array.isArray(parsed)) roots = parsed.filter(folder => typeof folder === 'string' && folder.trim())
+    } catch {}
+    if (!roots.length && settings.music_folder) roots = [settings.music_folder]
+    if (!roots.length) return
     setScanning(true)
-    await api.scanFolder(settings.music_folder)
-    setScanning(false)
+    try { await api.scanFolders(roots) } finally { setScanning(false) }
   }
 
   const checkDuplicates = async () => {
@@ -832,6 +926,7 @@ export default function Settings() {
     try {
       const data = await api.exportAllData()
       if (!data || data.error) throw new Error(t(data?.error || 'Export failed'))
+      data.localPrefs = collectLocalPrefs()
       triggerDownload(
         JSON.stringify(data, null, 2),
         `lokal-app-data-${new Date().toISOString().split('T')[0]}.json`,
@@ -907,6 +1002,7 @@ export default function Settings() {
     try {
       const result = await api.importAllData(importPreview.data)
       if (!result || result.error) throw new Error(t(result?.error || 'Import failed'))
+      restoreLocalPrefs(importPreview.data.localPrefs)
       setShowImportModal(false)
       setImportPreview(null)
       await reloadAfterDataReplace()
@@ -1171,13 +1267,27 @@ activeCategory === 'data' ? usersTried
                 className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm text-muted hover:text-white hover:border-accent/30 disabled:opacity-40 transition-colors"
               >
                 <RefreshCcw size={13} className={checkingUpdate ? 'animate-spin' : ''} />
-                {checkingUpdate ? t('Checking...') : /-nightly\./i.test(appVersion || '') ? t('Open Releases') : t('Check for updates')}
+                {checkingUpdate ? t('Checking...') : isWindowsStore ? t('Open Microsoft Store') : /-nightly\./i.test(appVersion || '') ? t('Open Releases') : t('Check for updates')}
               </button>
               {updateCheckResult && (
                 <span className="text-xs text-muted">{t(updateCheckResult)}</span>
               )}
             </div>
           </Row>
+          {isWindowsStore ? (
+            <Row label={t("Automatic Updates")} desc={t("This copy of Lokal came from the Microsoft Store, which keeps it up to date. Change this in the Microsoft Store's settings.")}>
+              <span className="text-xs text-muted">{t('Managed by the Microsoft Store')}</span>
+            </Row>
+          ) : (
+          <Row label={t("Automatic Updates")} desc={t("Off: Lokal no longer looks for a new version when it starts. Check for updates above still works.")}>
+            <button
+              onClick={() => set('auto_update', settings.auto_update === '0' ? '1' : '0')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.auto_update !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}
+            >
+              {settings.auto_update !== '0' ? t('On') : t('Off')}
+            </button>
+          </Row>
+          )}
           <Row label={t("Debug Logs")} desc={t("Open the folder with Lokal's logs, to attach to a bug report.")}>
             <button 
               onClick={() => api.openLogs?.()}
@@ -1185,6 +1295,16 @@ activeCategory === 'data' ? usersTried
             >
               <FolderOpen size={14} /> Show Logs
             </button>
+          </Row>
+          <Row label={t("Keyboard shortcuts")} desc={t("Not while typing in a search or text box. Esc closes what's open.")} stacked>
+            <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {KEYBOARD_SHORTCUTS.map(({ keys, label }) => (
+                <div key={label} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-muted">{t(label)}</span>
+                  <span className="flex gap-1">{keys.map(key => <kbd key={key} className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-text">{t(key)}</kbd>)}</span>
+                </div>
+              ))}
+            </div>
           </Row>
           <Row label={t("Hardware Acceleration")} desc={perfSaveError?.key === 'hardwareAcceleration' ? `${t("Couldn't save")} (${perfSaveError.message})` : perfRestartNeeded ? t('Restart Lokal to apply this change') : t('Use the graphics card to draw the app. Turn off if the window flickers or shows glitches.')}>
             <div className="flex items-center gap-3">
@@ -1203,7 +1323,7 @@ activeCategory === 'data' ? usersTried
               </button>
             </div>
           </Row>
-          <Row label={t("Performance Mode")} desc={perfSaveError?.key === 'performanceMode' ? `${t("Couldn't save")} (${perfSaveError.message})` : t('Disable visual effects such as backdrop blur, waveform drawing, ambient video glow, and cover-mix transitions to reduce CPU/GPU usage. Changes apply immediately without restarting.') }>
+          <Row label={t("Performance Mode")} desc={perfSaveError?.key === 'performanceMode' ? `${t("Couldn't save")} (${perfSaveError.message})` : t('Disable visual effects such as backdrop blur, waveform drawing, moving covers, colour backgrounds, ambient video glow, and cover-mix transitions to reduce CPU/GPU usage. Changes apply immediately without restarting.') }>
             <button
               onClick={() => setPerformanceMode(!perfSettings.performanceMode)}
               className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${perfSettings.performanceMode ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
@@ -1233,7 +1353,7 @@ activeCategory === 'data' ? usersTried
            </button>
          </Row>
         <Row label={t("Rescan Library")}>
-          <button onClick={rescan} disabled={scanning || !settings.music_folder}
+          <button onClick={rescan} disabled={scanning || (!settings.music_folder && !settings.music_folders)}
             className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm text-white hover:border-accent/30 disabled:opacity-40 transition-colors">
             <RefreshCw size={13} className={scanning ? 'animate-spin' : ''} />{scanning ? t('Scanning…') : t('Rescan')}
           </button>
@@ -1280,6 +1400,11 @@ activeCategory === 'data' ? usersTried
             )}
           </div>
         </Row>
+        <Row label={t("Download Folder")} desc={t("Optional folder inside your music library. Downloads are moved there and numbered in that folder; leave blank to keep the usual artist/album layout.")}>
+          <input type="text" value={settings.download_folder || ''} onChange={e => set('download_folder', e.target.value)}
+            placeholder={t("e.g. Downloads")} aria-label={t("Download Folder")}
+            className="w-52 max-w-full bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50" />
+        </Row>
         <Row label={t("Simultaneous Downloads")} desc={t("How many downloads run at once; the rest wait. A playlist counts as one.")}>
           <select
             value={settings.download_concurrency || '3'}
@@ -1309,7 +1434,7 @@ activeCategory === 'data' ? usersTried
             {settings.clean_download_metadata !== '0' ? t('On') : t('Off')}
           </button>
         </Row>
-        {api.isElectron && <Row label={t("Sync Linked Playlists at Launch")} desc={t("Playlists linked to one on Spotify, Tidal, Apple Music or Qobuz get the songs added there since the last sync each time Lokal starts, downloaded through your sources. Otherwise use Sync on the playlist.")}>
+        {api.isElectron && <Row label={t("Sync Linked Playlists at Launch")} desc={t("Playlists linked to one on Spotify, Tidal, Apple Music, Qobuz or YouTube Music get the songs added there since the last sync each time Lokal starts, downloaded through your sources. Otherwise use Sync on the playlist.")}>
           <button
             onClick={() => set('playlist_sync_on_launch', settings.playlist_sync_on_launch === '1' ? '0' : '1')}
             className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.playlist_sync_on_launch === '1' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
@@ -1358,6 +1483,7 @@ activeCategory === 'data' ? usersTried
             {t('Configure ({count})', { count: keepCommaArtists.length })}
           </button>
         </Row>
+        <Row stacked label={t('Artist separator words')} desc={t('Extra words used to separate featured artists and credits, including in brackets.')}><SplitWordsSettings /></Row>
         <Row label={t("Fill In Artist Pages")} desc={t("When you open an artist, look up their bio and picture if they're missing.")}>
           <button
             onClick={() => set('auto_fetch_artist_metadata', settings.auto_fetch_artist_metadata === '1' ? '0' : '1')}
@@ -1433,19 +1559,6 @@ activeCategory === 'data' ? usersTried
             <span className="text-xs text-muted">{t("sec")}</span>
           </div>
         </Row>
-        <Row label={t("Music Folder")}>
-          <div className="flex items-center gap-2">
-            <input value={settings.music_folder || ''} onChange={e => set('music_folder', e.target.value)}
-              placeholder={t("Choose your music folder")}
-              className="w-52 bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50" />
-            {api.isElectron && (
-              <button onClick={async () => { const f = await api.openFolder(); if (f) set('music_folder', f) }}
-                className="p-1.5 bg-card border border-border rounded-lg text-muted hover:text-white transition-colors">
-                <FolderOpen size={14} />
-              </button>
-            )}
-          </div>
-        </Row>
       </Section>
       )}
 
@@ -1492,6 +1605,15 @@ activeCategory === 'data' ? usersTried
 
       {inCategory('playback') && (
       <Section title={t("Playback")}>
+        <Row label={t("Autoplay")} desc={t("Play the next song automatically. Turn off to stop when the current song ends.")}>
+          <button type="button" aria-pressed={autoplayEnabled} onClick={() => {
+            const enabled = !autoplayEnabled
+            setAutoplayEnabled(enabled)
+            try { localStorage.setItem('lokal-autoplay', enabled ? '1' : '0') } catch {}
+          }} className="px-4 py-1.5 rounded-lg text-xs border border-border">
+            {autoplayEnabled ? t("On") : t("Off")}
+          </button>
+        </Row>
         <OutputPrecisionSettings />
         <Row label={t("ReplayGain")} desc={t("Use embedded ReplayGain tags to bring tracks closer in loudness. Peak tags limit boosts; tracks without tags are unchanged.")}>
           <select aria-label={t("ReplayGain mode")} value={settings.replaygain_mode ?? replayGainMode ?? 'off'} onChange={e => set('replaygain_mode', e.target.value)}
@@ -1499,7 +1621,27 @@ activeCategory === 'data' ? usersTried
             <option value="off">{t('Off')}</option>
             <option value="track">{t('Track gain')}</option>
             <option value="album">{t('Album gain')}</option>
+            <option value="smart">{t('Smart gain')}</option>
           </select>
+        </Row>
+        <Row label={t("Playback speed")} desc={t("Adjusts the speed of the music and keeps music videos in sync.")}>
+          <div className="flex items-center gap-3">
+            <input type="range" min={SPEED_MIN} max={SPEED_MAX} step={SPEED_STEP} value={playbackSpeed}
+              onChange={e => setPlaybackSpeed(parseFloat(e.target.value))}
+              aria-label={t("Playback speed")}
+              className="w-32 accent-accent cursor-pointer" />
+            <span className="w-12 text-right text-xs font-display tabular-nums text-white">{playbackSpeed.toFixed(2)}×</span>
+            <button type="button" onClick={() => setPlaybackSpeed(1)} disabled={playbackSpeed === 1}
+              className="text-xs text-muted hover:text-white transition-colors disabled:opacity-40">{t("Reset")}</button>
+          </div>
+        </Row>
+        <Row label={t("Fetch Lyrics Automatically")} desc={t("Off: songs only show the lyrics they carry themselves (in their tags or a .lrc next to them). Looking again from the lyrics panel still searches online.")}>
+          <button
+            onClick={() => set('lyrics_auto_fetch', settings.lyrics_auto_fetch === '0' ? '1' : '0')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.lyrics_auto_fetch !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}
+          >
+            {settings.lyrics_auto_fetch !== '0' ? t('On') : t('Off')}
+          </button>
         </Row>
         <Row label={t("Song Transitions")} desc={crossfade.mode === 'automix'
           ? t('AutoMix listens to both songs and blends them like a DJ: on the beat when their tempos are close (the next one sped up or slowed a touch, pitch kept), on the song\'s own fade-out otherwise, with silence at either end cut. Albums play as made.')
@@ -1679,7 +1821,7 @@ activeCategory === 'data' ? usersTried
 
       {api.isElectron && inCategory('integrations') && (
       <Section title={t("Spotify")}>
-        <Row stacked label={t("Spotify Cookie")} desc={"Your Spotify sign-in, for Liked Songs here and Spotify Canvas covers: open open.spotify.com in your browser and sign in, press F12, go to Application (Storage in Firefox) › Cookies › open.spotify.com, and copy the value of sp_dc. It lasts about a year.\n\nIt stays on this computer and is only sent to Spotify."}>
+        <Row id="spotify-cookie-settings" stacked label={t("Spotify Cookie")} desc={"Your Spotify sign-in, for Liked Songs here and Spotify Canvas covers: open open.spotify.com in your browser and sign in, press F12, go to Application (Storage in Firefox) › Cookies › open.spotify.com, and copy the value of sp_dc. It lasts about a year.\n\nIt stays on this computer and is only sent to Spotify."}>
           <div className="flex flex-wrap items-center gap-2">
             <input type="password" value={settings.spotify_sp_dc || ''} onChange={e => { set('spotify_sp_dc', e.target.value); setSpotifyCheck(null) }}
               placeholder={t("sp_dc value")} spellCheck={false} autoComplete="off" aria-label={t("Spotify cookie (sp_dc)")}
@@ -1692,6 +1834,12 @@ activeCategory === 'data' ? usersTried
               spotifyCheck.error
                 ? <p className="text-xs text-red-400">{t(spotifyCheck.error)}</p>
                 : <p className="text-xs text-green-400">{t("Signed in to Spotify.")}</p>
+            )}
+            {settings.spotify_sp_dc && (
+              <button type="button" onClick={() => { set('spotify_sp_dc', ''); setSpotifyCheck(null) }}
+                className="px-3 py-1.5 rounded-lg text-xs border border-border text-muted hover:text-white transition-colors">
+                {t('Remove')}
+              </button>
             )}
           </div>
         </Row>
@@ -1821,6 +1969,19 @@ activeCategory === 'data' ? usersTried
           >
             {APP_LANGUAGES.map(item => <option key={item.code} value={item.code}>{item.name}</option>)}
           </select>
+        </Row>
+      </Section>
+      )}
+      {inCategory('appearance') && (
+      <Section title={t("Home")}>
+        <Row label={t("Cover Flow")} desc={t("Show classic iTunes-style Cover Flow on Home → Local. Turn this off to restore the original cylindrical carousel. This choice is independent of Windows animation settings.")}>
+          <button type="button"
+            aria-label={t("Enable Cover Flow on Home")}
+            aria-pressed={settings.home_cover_flow !== '0'}
+            onClick={() => set('home_cover_flow', settings.home_cover_flow === '0' ? '1' : '0')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.home_cover_flow !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
+            {settings.home_cover_flow !== '0' ? t('On') : t('Off')}
+          </button>
         </Row>
       </Section>
       )}
@@ -2001,41 +2162,6 @@ activeCategory === 'data' ? usersTried
             )}
           </div>
 
-          <div className="pt-4 mt-4 border-t border-border">
-            <Row
-              label={t("Tint App Logo")}
-              desc={t("Tint the logo with the theme's accent colour.")}
-            >
-              <button
-                onClick={async () => {
-                  const enabled = parseFloat(themeOverrides['--logo-mask-opacity'] || '0') > 0.05
-                  if (enabled) {
-                    await saveOverrides({
-                      '--logo-image-filter': 'none',
-                      '--logo-image-opacity': '1',
-                      '--logo-mask-opacity': '0',
-                      '--logo-wrap-bg': 'transparent',
-                      '--logo-wrap-shadow': 'none',
-                      '--logo-wrap-border': '1px solid transparent',
-                    })
-                  } else {
-                    await saveOverrides({
-                      '--logo-image-filter': 'grayscale(1) brightness(1.02) contrast(1.06)',
-                      '--logo-image-opacity': '1',
-                      '--logo-mask-opacity': '0.38',
-                      '--logo-wrap-bg': 'rgba(var(--accent-rgb), 0.1)',
-                      '--logo-wrap-shadow': '0 0 12px rgba(var(--accent-rgb), 0.1)',
-                      '--logo-wrap-border': '1px solid rgba(var(--accent-rgb), 0.2)',
-                    })
-                  }
-                }}
-                className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${parseFloat(themeOverrides['--logo-mask-opacity'] || '0') > 0.05 ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}
-              >
-                {parseFloat(themeOverrides['--logo-mask-opacity'] || '0') > 0.05 ? t('On') : t('Off')}
-              </button>
-            </Row>
-          </div>
-
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
             className="flex items-center gap-2 text-xs text-muted hover:text-white transition-colors"
@@ -2070,7 +2196,12 @@ activeCategory === 'data' ? usersTried
         </div>
       </Section>
       )}
-
+      {inCategory('appearance') && (
+        <Section title="TV Mode">
+          <TvModeSettings />
+        </Section>
+      )}
+        
       {inCategory('appearance') && (
       <Section title={t("Now Playing")}>
         <Row label={t("Colour Background")} desc={t("Colour the side panel and full screen player from the album cover. Off: a dark background.")}>
@@ -2078,6 +2209,13 @@ activeCategory === 'data' ? usersTried
             onClick={() => set('artwork_backdrop', settings.artwork_backdrop === '0' ? '1' : '0')}
             className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.artwork_backdrop !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
             {settings.artwork_backdrop !== '0' ? t('On') : t('Off')}
+          </button>
+        </Row>
+        <Row label={t("Rotating CD")} desc={t("Rotate the album cover like a CD in fullscreen while music plays. Animated covers take priority.")}>
+          <button
+            onClick={() => set('fullscreen_rotating_cd', settings.fullscreen_rotating_cd === '1' ? '0' : '1')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.fullscreen_rotating_cd === '1' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
+            {settings.fullscreen_rotating_cd === '1' ? t('On') : t('Off')}
           </button>
         </Row>
         <Row label={t("Moving Covers")} desc={t("Play an album's animated cover in the side panel and full screen player, when there is one.")}>
@@ -2088,7 +2226,7 @@ activeCategory === 'data' ? usersTried
           </button>
         </Row>
         {settings.motion_covers !== '0' && (() => {
-          const all = [['apple', 'Apple Music', 'Animated album covers'], ['tidal', 'Tidal', 'Video album covers'], ['community', 'Community list', 'Clips shared by other listeners'], ['m8tec', 'm8tec Artwork', 'Apple Music animated covers found by artwork.m8tec.top'], ['spotify', 'Spotify Canvas', 'Needs your Spotify cookie (below)']]
+          const all = [['apple', 'Apple Music', 'Animated album covers'], ['tidal', 'Tidal', 'Video album covers'], ['community', 'Community list', 'Clips shared by other listeners'], ['m8tec', 'm8tec Artwork', 'Apple Music animated covers found by artwork.m8tec.top'], ['spotify', 'Spotify Canvas', 'Requires Spotify cookie: Settings → Integrations → Spotify']]
           let chosen = ['apple', 'tidal', 'community']
           try { const v = JSON.parse(settings.motion_cover_sources || 'null'); if (Array.isArray(v)) chosen = v } catch {}
           const toggle = (id) => set('motion_cover_sources', JSON.stringify(chosen.includes(id) ? chosen.filter(x => x !== id) : [...chosen, id]))
@@ -2106,11 +2244,19 @@ activeCategory === 'data' ? usersTried
             </Row>
             {chosen.includes('spotify') && (
               <>
-                <Row stacked label={t("Spotify Cookie")} desc={t("Spotify only shows Canvas to signed-in accounts. To sign in here: open open.spotify.com in your browser and sign in, press F12, go to Application (Storage in Firefox) › Cookies › open.spotify.com, and copy the value of sp_dc. It lasts about a year.\n\nIt stays on this computer and is only sent to Spotify.")}>
-                  <input type="password" value={settings.spotify_sp_dc || ''} onChange={e => { set('spotify_sp_dc', e.target.value); setSpotifyCheck(null) }}
-                    placeholder={t("sp_dc value")} spellCheck={false} autoComplete="off"
-                    className="w-full max-w-md bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50" />
-                </Row>
+                <div className="space-y-2 rounded-lg border border-border/70 bg-card/40 px-3 py-3">
+                  <p className="text-xs text-muted leading-relaxed">
+                    {settings.spotify_sp_dc
+                      ? t('Spotify Canvas requires a valid Spotify cookie (sp_dc). You can test or replace it under Integrations → Spotify.')
+                      : t('Spotify Canvas requires a Spotify cookie (sp_dc). Add it under Integrations → Spotify before Canvas can load.')}
+                  </p>
+                  {api.isElectron && (
+                    <button type="button" onClick={openSpotifyCookieSettings}
+                      className="text-xs text-accent hover:underline focus-visible:underline focus-visible:outline-none">
+                      {t('Open Spotify Cookie settings →')}
+                    </button>
+                  )}
+                </div>
                 <Row label={t("Prioritize Spotify Canvas")} desc={t("Ask Spotify first. It has Canvas for many more songs, but they're tall videos, cropped to a square here.")}>
                   <button
                     onClick={() => set('spotify_canvas_first', settings.spotify_canvas_first === '1' ? '0' : '1')}
@@ -2118,28 +2264,6 @@ activeCategory === 'data' ? usersTried
                     {settings.spotify_canvas_first === '1' ? t('On') : t('Off')}
                   </button>
                 </Row>
-                <div className="flex items-center gap-3">
-                  <button onClick={testSpotifyCanvas} disabled={spotifyCheck?.loading}
-                    className="px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border border-accent/50 bg-accent/20 text-accent disabled:opacity-50">
-                    {spotifyCheck?.loading ? t('Checking...') : t('Save & Test')}
-                  </button>
-                  {settings.spotify_sp_dc && (
-                    <button onClick={async () => {
-                      const saved = await api.saveSettings({ spotify_sp_dc: '' }).catch(e => ({ error: e?.message || 'Save failed' }))
-                      if (saved?.error) { setSpotifyCheck({ error: `${t("Couldn't remove the cookie")}: ${saved.error}` }); return }
-                      set('spotify_sp_dc', ''); setSpotifyCheck(null)
-                      window.dispatchEvent(new Event('lokal:settings-saved'))
-                    }}
-                      className="px-3 py-1.5 rounded-lg text-xs border border-border text-muted hover:text-white transition-colors">
-                      {t('Remove')}
-                    </button>
-                  )}
-                  {spotifyCheck && !spotifyCheck.loading && (
-                    spotifyCheck.error
-                      ? <p className="text-xs text-red-400">{t(spotifyCheck.error)}</p>
-                      : <p className="text-xs text-green-400">{t("Signed in -- canvases will be looked up.")}</p>
-                  )}
-                </div>
               </>
             )}
             </>
@@ -2157,18 +2281,114 @@ activeCategory === 'data' ? usersTried
             {settings.glass_player_bar !== '0' ? t('On') : t('Off')}
           </button>
         </Row>
-        <Row label={t("Waveform")} desc={t("Moving bars next to the volume while music plays.")}>
-          <button
-            onClick={() => set('player_waveform', settings.player_waveform === '0' ? '1' : '0')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.player_waveform !== '0' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
-            {settings.player_waveform !== '0' ? t('On') : t('Off')}
-          </button>
+        <Row label={t("Visualization")} desc={t("Choose the audio-reactive graphic beside the player controls.")}>
+          <select aria-label={t("Player bar visualization")} value={settings.player_visualizer || (settings.player_waveform === '0' ? 'off' : 'waveform')} onChange={e => set('player_visualizer', e.target.value)}
+            className="bg-card border border-border rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-accent/50">
+            <option value="off">{t("Off")}</option>
+            <option value="waveform">{t("Waveform")}</option>
+            <option value="spectrum">{t("Spectrum")}</option>
+            <option value="waves">{t("Waves")}</option>
+            <option value="lightning">{t("Lightning")}</option>
+          </select>
+        </Row>
+      </Section>
+      )}
+
+      {inCategory('appearance') && (
+      <Section title={t("Visualizer")}>
+        <Row label={t("MilkDrop presets")} desc={t("Choose which MilkDrop presets are available to switch between in full-screen mode.")}>
+          <div className="relative" ref={visualizerMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowVisualizerMenu(value => !value)}
+              aria-haspopup="true"
+              aria-expanded={showVisualizerMenu}
+              title={t("Choose which MilkDrop presets appear in full-screen mode")}
+              className="flex min-w-44 items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs text-white transition hover:border-accent/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <span>{t("Choose presets")}</span>
+              <span className="flex items-center gap-2 text-muted">
+                {milkDropPresetNames.length ? `${enabledMilkDropPresets.length}/${milkDropPresetNames.length}` : '—'}
+                <ChevronDown size={13} className={showVisualizerMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </span>
+            </button>
+            {showVisualizerMenu && (
+              <div role="group" aria-label={t("Available MilkDrop presets")}
+                className="absolute right-0 top-full z-40 mt-2 w-72 max-w-[80vw] rounded-xl border border-border bg-elevated p-2 shadow-2xl">
+                <p className="px-2 pb-2 pt-1 text-[10px] uppercase tracking-widest text-muted">{t("Included in full-screen mode")}</p>
+                <input
+                  type="search"
+                  value={milkDropPresetSearch}
+                  onChange={event => setMilkDropPresetSearch(event.target.value)}
+                  placeholder={t("Search presets")}
+                  aria-label={t("Search presets")}
+                  className="mb-2 w-full rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-white outline-none placeholder:text-muted focus:border-accent/60"
+                />
+                <div className="max-h-64 overflow-y-auto overscroll-contain">
+                  {milkDropPresetsLoading && <p className="px-2 py-3 text-xs text-muted">{t("Loading MilkDrop presets…")}</p>}
+                  {!milkDropPresetsLoading && milkDropPresetLoadError && (
+                    <div className="px-2 py-3 text-xs text-muted">
+                      <p>{t(milkDropPresetLoadError)}</p>
+                      <button
+                        type="button"
+                        className="mt-2 text-accent hover:underline"
+                        onClick={() => { setMilkDropPresetLoadStarted(false); setMilkDropPresetLoadError('') }}
+                      >{t("Retry")}</button>
+                    </div>
+                  )}
+                  {!milkDropPresetsLoading && !milkDropPresetLoadError && filteredMilkDropPresetNames.length === 0 && (
+                    <p className="px-2 py-3 text-xs text-muted">{t("No presets match this search.")}</p>
+                  )}
+                  {!milkDropPresetsLoading && !milkDropPresetLoadError && filteredMilkDropPresetNames.map(name => {
+                    const checked = enabledMilkDropPresets.includes(name)
+                    return (
+                      <label key={name} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 text-sm text-white transition hover:bg-card">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={checked && enabledMilkDropPresets.length === 1}
+                          onChange={() => {
+                            const next = checked
+                              ? enabledMilkDropPresets.filter(value => value !== name)
+                              : [...enabledMilkDropPresets, name]
+                            if (next.length) set('fullscreen_milkdrop_presets', JSON.stringify(next))
+                          }}
+                          className="h-3.5 w-3.5 accent-accent disabled:opacity-50"
+                        />
+                        <span className="flex-1 break-words">{name}</span>
+                        {checked && <span className="text-[10px] text-accent">{t("On")}</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+                <p className="border-t border-border/60 px-2 pb-1 pt-2 text-[10px] text-muted">{t("{count} selected", { count: enabledMilkDropPresets.length })}</p>
+              </div>
+            )}
+          </div>
+        </Row>
+      </Section>
+      )}
+
+      {inCategory('appearance') && (
+      <Section title={t("Navigation")}>
+        <Row stacked label={t("Sidebar order")} desc={t("Drag items to reorder the sidebar. Move items below the divider to group them under More.")}>
+          <AppTabsSettings value={settings.sidebar_nav || ''} onChange={value => set('sidebar_nav', value)} />
         </Row>
       </Section>
       )}
 
       {inCategory('appearance') && (
       <Section title={t("Layout")}>
+        <Row label={t("Panel Width")} desc={t("Freeform: drag the inner edge of the sidebar or the side panel to make it wider or narrower (double-click the edge to reset).")}>
+          <div className="flex gap-0.5 p-0.5 bg-card rounded-lg border border-border/50">
+            {[[false, 'Fixed'], [true, 'Freeform']].map(([value, label]) => (
+              <button key={label} onClick={() => setPanelFreeform(value)}
+                className={`px-3 py-1 rounded-md text-xs font-display uppercase tracking-wider transition-colors ${panelFreeform === value ? 'bg-accent/20 text-accent' : 'text-muted hover:text-white'}`}>
+                {t(label)}
+              </button>
+            ))}
+          </div>
+        </Row>
         <Row
           label={t("Side Panels")}
           desc={t("Merged: Queue and Lyrics open as tabs in the side panel. Independent: each opens in its own panel next to it.")}
@@ -2343,6 +2563,17 @@ activeCategory === 'data' ? usersTried
               </div>
             )}
           </div>
+        </Row>
+      </Section>
+      )}
+
+      {api.isElectron && inCategory('data') && (
+      <Section title={t("Cache Analysis")}>
+        <Row label={t("Analyze storage")} desc={t("Inspect Lokal's disk usage and remove unused caches, old logs and other recoverable data.")}>
+          <button onClick={() => navigate('/cache-analysis')}
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm text-muted hover:text-white transition-colors">
+            <Search size={14} /> {t('Open Cache Analysis')}
+          </button>
         </Row>
       </Section>
       )}

@@ -200,6 +200,11 @@ function getVersionDaysBehind(installedVersion, latestVersion) {
   return diffMs > 0 ? Math.floor(diffMs / 86400000) : 0
 }
 
+// The first run of a standalone yt-dlp on macOS unpacks itself and is scanned by
+// the system, which takes far longer than 10 s; a version check that timed out
+// made the update window report "Unknown" and offer the update again forever.
+const VERSION_TIMEOUT_MS = process.platform === 'darwin' ? 60000 : 10000
+
 function getExecutableVersion(executable, args = ['--version'], retries = 3) {
   return new Promise(resolve => {
     if (!executable) {
@@ -214,7 +219,7 @@ function getExecutableVersion(executable, args = ['--version'], retries = 3) {
       // rejection that crashes the whole ipcMain handler.
       let child
       try {
-        child = execFile(executable, args, { windowsHide: true, timeout: 10000 }, (error, stdout) => {
+        child = execFile(executable, args, { windowsHide: true, timeout: VERSION_TIMEOUT_MS }, (error, stdout) => {
           if (error && !stdout) {
             if (isBusyError(error) && attemptsLeft > 0) {
               console.warn(`[Version Check] Executable busy, retrying... (${attemptsLeft} attempts left)`);
@@ -611,9 +616,10 @@ async function downloadYtDlp(progressCallback) {
   }
 
   ytDlpInstallPromise = (async () => {
-    const url = process.platform === 'win32'
-      ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
-      : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+    // Plain "yt-dlp" is a Python script; Macs without Python can't run it, so
+    // they get the standalone build.
+    const asset = process.platform === 'win32' ? 'yt-dlp.exe' : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp'
+    const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`
 
     const dest = path.join(getUserDataBin(), filename)
     const tempDest = path.join(getUserDataBin(), `${filename}.download-${process.pid}-${Date.now()}`)
@@ -642,6 +648,12 @@ async function downloadYtDlp(progressCallback) {
         console.log(`[Tools] Set executable permissions for yt-dlp`)
       }
 
+      // The first run is the slow one (and macOS checks the file); do it now, so
+      // the install ends with a working yt-dlp or a clear error, not a silent loop.
+      if (progressCallback) progressCallback({ status: 'installing', message: 'Checking yt-dlp starts...' })
+      const version = await getExecutableVersion(dest, ['--version'], 0)
+      if (!version) throw new Error('yt-dlp was downloaded but does not start on this computer. Try again, or set a custom path in Settings → External Tools.')
+
       return dest
     } catch (err) {
       console.error(`[Tools] Failed to download yt-dlp: ${err.message}`)
@@ -659,6 +671,52 @@ async function downloadYtDlp(progressCallback) {
 
 
 let ffmpegInstallPromise = null
+
+// macOS ffmpeg/ffprobe: a .gz or .zip holding one native binary (arm64 or Intel,
+// from ffmpeg-static's releases).
+async function installMacBinary(name, sources, binDir, progressCallback) {
+  let lastErr = null
+  for (const { url, kind } of sources) {
+    const tmp = path.join(binDir, `${name}.${process.pid}-${Date.now()}.${kind}`)
+    const out = `${tmp}.bin`
+    try {
+      await downloadFileWithRetry(url, tmp, progressCallback, 1, `Downloading ${name}`)
+      if (progressCallback) progressCallback({ status: 'extracting', message: `Extracting ${name}...` })
+      if (kind === 'gz') {
+        fs.writeFileSync(out, require('zlib').gunzipSync(fs.readFileSync(tmp)))
+      } else {
+        const entry = new AdmZip(tmp).getEntries().find(e => !e.isDirectory && path.basename(e.entryName) === name)
+        if (!entry) throw new Error(`${name} not found inside downloaded archive`)
+        fs.writeFileSync(out, entry.getData())
+      }
+      validateDownloadedExecutable(out)
+      fs.chmodSync(out, '755')
+      const dest = path.join(binDir, name)
+      await replaceFileWithRetry(out, dest, progressCallback)
+      return dest
+    } catch (err) {
+      lastErr = err
+      console.warn(`[Tools] ${name} from ${url} failed: ${err.message}`)
+    } finally {
+      try { fs.removeSync(tmp) } catch {}
+      try { fs.removeSync(out) } catch {}
+    }
+  }
+  throw lastErr || new Error(`Could not download ${name}`)
+}
+
+async function installMacFfmpeg(binDir, progressCallback) {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  const from = name => [{ url: `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/${name}-darwin-${arch}.gz`, kind: 'gz' }]
+  const ffmpeg = await installMacBinary('ffmpeg', from('ffmpeg'), binDir, progressCallback)
+  // ffprobe is optional: the app works without it.
+  try {
+    await installMacBinary('ffprobe', from('ffprobe'), binDir, progressCallback)
+  } catch (err) {
+    console.warn(`[Tools] ffprobe not installed: ${err.message}`)
+  }
+  return ffmpeg
+}
 
 function getFfmpegInstallLock() {
   return ffmpegInstallPromise
@@ -683,10 +741,12 @@ async function downloadFfmpeg(progressCallback) {
       extractFolderName = 'ffmpeg-master-latest-win64-gpl'
       exeSubPath = 'bin'
     } else if (process.platform === 'darwin') {
-      url = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macos64-gpl.tar.xz'
-      archiveExt = 'tar.xz'
-      extractFolderName = 'ffmpeg-master-latest-macos64-gpl'
-      exeSubPath = 'bin'
+      // yt-dlp's FFmpeg-Builds has no macOS build (404): use single-binary builds.
+      try {
+        return await installMacFfmpeg(binDir, progressCallback)
+      } finally {
+        ffmpegInstallPromise = null
+      }
     } else {
       url = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz'
       archiveExt = 'tar.xz'

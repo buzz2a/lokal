@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { libraryAlbum, loadOnlineAlbum, loadOnlineArtistAlbums, onlineAlbumPath, trackAlbumPath } from '../src/onlineBrowse.js'
+import { libraryAlbum, loadArtistChannel, loadOnlineAlbum, loadOnlineArtistAlbums, onlineAlbumPath, trackAlbumPath } from '../src/onlineBrowse.js'
+import { classifyOnlineReleases, groupReleases } from '../src/releaseTypes.js'
 import { isContextNavigable, navigateToTrackAlbum } from '../src/playbackContext.js'
 
 test('album pages are addressed by artist and album (and YouTube album id)', () => {
@@ -112,11 +113,39 @@ test("album songs fall back to the album's cover, and to the playback sources", 
 test("an artist's albums: the catalogue's, then their songs' albums, once each", async () => {
   const client = { discoveryCatalogue: async ({ source }) => source === 'youtube' ? { albums: [{ title: 'I Am', artist: 'Earth, Wind & Fire', albumId: 'MPREiam' }] } : { error: 'no' } }
   const albums = await loadOnlineArtistAlbums('Earth, Wind & Fire', [
-    { title: 'September', album: 'The Best of Earth, Wind & Fire, Vol. 1', artwork_url: 'https://x.example/best.jpg' },
+    {
+      title: 'September',
+      album: 'The Best of Earth, Wind & Fire, Vol. 1',
+      artwork_url: 'https://x.example/best.jpg',
+      album_release_type: 'Compilation',
+      album_track_count: 17,
+      album_is_main_artist: false,
+    },
     { title: 'Boogie Wonderland', album: 'I am', artwork_url: 'https://x.example/iam.jpg' },
   ], client)
   assert.deepEqual(albums.map(album => album.title), ['I Am', 'The Best of Earth, Wind & Fire, Vol. 1'])
   assert.equal(albums[0].artwork_url, 'https://x.example/iam.jpg')
+  assert.equal(albums[1].release_type, 'Compilation')
+  assert.equal(albums[1].track_count, 17)
+  assert.equal(albums[1].is_main_artist, false)
+  assert.deepEqual(groupReleases(classifyOnlineReleases(albums)).map(group => [group.type, group.items.map(item => item.title)]), [
+    ['album', ['I Am']], ['feature', ['The Best of Earth, Wind & Fire, Vol. 1']],
+  ])
+})
+
+test('channel feature metadata is merged into an existing catalogue release', async () => {
+  const channel = await loadArtistChannel('Artist', {}, {
+    discoveryCatalogue: async () => ({
+      name: 'Artist',
+      tracks: [{ title: 'Guest song', artist: 'Other', album: 'Collaboration', album_is_main_artist: false }],
+      albums: [{ title: 'Collaboration', artist: 'Artist', release_type: 'album' }],
+    }),
+  })
+  assert.equal(channel.albums.length, 1)
+  assert.equal(channel.albums[0].is_main_artist, false)
+  assert.deepEqual(groupReleases(classifyOnlineReleases(channel.albums)).map(group => [group.type, group.items.map(item => item.title)]), [
+    ['feature', ['Collaboration']],
+  ])
 })
 
 test('"Playing from" leads back to an online album or artist page', () => {

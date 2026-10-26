@@ -1,6 +1,8 @@
 const { registerNativeOutput, closeNativeOutput } = require('./audio/output')
 const { app, BrowserWindow, ipcMain, shell, globalShortcut, screen, protocol, net, powerSaveBlocker, Tray, Menu, nativeImage } = require('electron')
 const path = require('path')
+const { configureMprisIdentity } = require('./mpris')
+configureMprisIdentity(app)
 // Keep the renderer at normal priority on Windows while minimized so the
 // AudioWorklet/native output path is not starved by backgrounding.
 if (process.platform === 'win32') app.commandLine.appendSwitch('disable-renderer-backgrounding')
@@ -24,6 +26,7 @@ const { registerLyricsHandlers } = require('./ipc/lyrics')
 const { registerArtworkFxHandlers } = require('./ipc/artworkFx')
 const { registerFollowedArtistsHandlers } = require('./ipc/followedArtists')
 const { registerCacheHandlers } = require('./ipc/cache')
+const { registerRadioHandlers } = require('./ipc/radio')
 const { registerUserHandlers } = require('./ipc/users')
 const { registerDiscordHandlers, disconnectForQuit } = require('./ipc/discord')
 const { registerLastFmHandlers } = require('./ipc/lastfm')
@@ -41,6 +44,7 @@ const { setRemoteState, setRemoteCommandHandler, getRemoteConnectionInfo } = req
 const { updateThumbarButtons, registerThumbarHandlers } = require('./ipc/thumbar')
 const { registerSmtcHandlers, updateSmtcState, stopSmtcBridge } = require('./ipc/smtc')
 const { registerOnlineHandlers, registerStreamScheme, registerStreamProtocol } = require('./ipc/online')
+const { registerAtmosHandlers } = require('./audio/atmos')
 const { registerSpotifyLikesHandlers } = require('./ipc/spotifyLikes')
 const { registerAutomixHandlers } = require('./ipc/automix')
 const { registerFlowHandlers } = require('./ipc/flow')
@@ -168,6 +172,9 @@ autoUpdater.allowPrerelease = false
 // it, and being offered the stable release (older in features once the
 // nightly moves on) makes no sense. New nightlies come from GitHub Releases.
 const IS_NIGHTLY = /-nightly\./i.test(app.getVersion())
+// The Microsoft Store (MSIX) build is updated by the Store itself; an
+// electron-updater install would fail inside the package anyway.
+const IS_WINDOWS_STORE = process.windowsStore === true
 
 autoUpdater.on('update-available', (info) => {
   if (mainWindow) {
@@ -322,10 +329,16 @@ function showFromTray() {
   mainWindow.show()
   mainWindow.focus()
 }
+// The icon with the sticker in the theme's accent colour, sent by the page
+// (src/accentAppIcon.js); null until it arrives.
+let accentIcon = null
+const trayImage = image => image.resize(process.platform === 'win32' ? { width: 32, height: 32 } : { width: 16, height: 16 })
+
 function loadTrayIcon() {
+  if (accentIcon) return accentIcon
   const filenames = process.platform === 'win32'
-    ? ['lokal-icon.ico', 'lokal-icon.png']
-    : ['lokal-icon.png', 'lokal-icon.ico']
+    ? ['lokal-icon.ico', 'lokal-icon-rounded.png']
+    : ['lokal-icon-rounded.png', 'lokal-icon.ico']
   const roots = app.isPackaged
     ? [path.join(app.getAppPath(), 'dist'), path.join(process.resourcesPath, 'app.asar', 'dist')]
     : [path.join(__dirname, '../public'), path.join(app.getAppPath(), 'dist')]
@@ -350,7 +363,7 @@ function hideToTray() {
       log.error('[tray] Refusing to hide the window without a visible tray icon')
       return false
     }
-    tray = new Tray(process.platform === 'win32' ? image : image.resize({ width: 16, height: 16 }))
+    tray = new Tray(accentIcon || process.platform !== 'win32' ? trayImage(image) : image)
     tray.setToolTip('Lokal')
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: 'Show Lokal', click: showFromTray },
@@ -438,7 +451,7 @@ function setPreferredMediaKeys(enabled) {
 function createWindow() {
   const saved = loadWindowState()
   mainWindow = new BrowserWindow({
-    icon: path.join(__dirname, process.platform === 'win32' ? '../public/lokal-icon.ico' : '../public/lokal-icon.png'),
+    icon: path.join(__dirname, process.platform === 'win32' ? '../public/lokal-icon.ico' : '../public/lokal-icon-rounded.png'),
     ...(saved?.bounds || { width: 1400, height: 860 }), minWidth: NORMAL_MIN_WIDTH, minHeight: NORMAL_MIN_HEIGHT,
     useContentSize: true,
     resizable: true,
@@ -496,7 +509,7 @@ function createWindow() {
   })
   
   mainWindow.webContents.on('did-finish-load', () => {
-    mainWindow.webContents.send('perf-settings', perfSettings)
+    mainWindow.webContents.send('perf-settings', loadPerformanceSettings())
     if (pendingLastfmAuthToken) {
       mainWindow.webContents.send('lastfm:auth-token', pendingLastfmAuthToken)
       pendingLastfmAuthToken = ''
@@ -548,6 +561,17 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.lokal.music');
   }
   try { initDB() } catch (e) { console.error('DB:', e.message) }
+  try {
+    const db = getDB()
+    const plural = db.prepare("SELECT value FROM settings WHERE key = 'music_folders'").get()?.value
+    let folders = []
+    try { folders = Array.isArray(JSON.parse(plural || 'null')) ? JSON.parse(plural) : [] } catch {}
+    if (!folders.length) {
+      const legacy = db.prepare("SELECT value FROM settings WHERE key = 'music_folder'").get()?.value
+      if (legacy) folders = [legacy]
+    }
+    require('./libraryWatcher').watchLibraryRoots(folders)
+  } catch (e) { console.error('Library watcher:', e.message) }
   try { markInterruptedPlaylistsIncomplete() } catch (e) { console.error('Downloads:', e.message) }
   try { initPlugins() } catch (e) { console.error('Plugins:', e.message) }
   try {
@@ -564,7 +588,7 @@ app.whenReady().then(() => {
     registerExtraDownloaderHandlers, registerPlaylistArchiveHandlers, registerLyricsHandlers, registerUserHandlers,
     registerDiscordHandlers, registerExtraHandlers, registerV4Handlers, registerLastFmHandlers, registerListenBrainzHandlers, registerBeatportHandlers, registerShazamHandlers, registerMetadataHandlers,
     registerToolsHandlers, registerPlaylistHandlers, registerMixesHandlers, registerPluginHandlers, registerRecapHandlers,
-    registerQualityHandlers, registerLibraryKeysHandlers
+    registerQualityHandlers, registerLibraryKeysHandlers, registerRadioHandlers
   ]) {
     try { fn(ipcMain) } catch (e) { console.error(fn.name + ':', e.message) }
   }
@@ -575,22 +599,44 @@ app.whenReady().then(() => {
   try { registerFollowedArtistsHandlers(ipcMain) } catch (e) { console.error('registerFollowedArtistsHandlers:', e.message) }
   try { registerCacheHandlers(ipcMain) } catch (e) { console.error('registerCacheHandlers:', e.message) }
   try { registerOnlineHandlers(ipcMain) } catch (e) { console.error('registerOnlineHandlers:', e.message) }
+  try {
+    registerAtmosHandlers(ipcMain, {
+      getDB,
+      broadcast: (channel, payload) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send(channel, payload)
+        }
+      },
+    })
+  } catch (e) { console.error('registerAtmosHandlers:', e.message) }
   try { registerSpotifyLikesHandlers(ipcMain) } catch (e) { console.error('registerSpotifyLikesHandlers:', e.message) }
   try { registerAutomixHandlers(ipcMain) } catch (e) { console.error('registerAutomixHandlers:', e.message) }
   try { registerFlowHandlers(ipcMain) } catch (e) { console.error('registerFlowHandlers:', e.message) }
   try { registerCastHandlers(ipcMain, { getWindow: () => mainWindow, powerSaveBlocker }) } catch (e) { console.error('registerCastHandlers:', e.message) }
   try { registerStreamProtocol(protocol, net) } catch (e) { console.error('registerStreamProtocol:', e.message) }
-  // SpotiFLAC repositories are refreshed at every launch (in the background,
+  // Mornye repositories are refreshed at every launch (in the background,
   // once the window has had time to open), so updates and new sources show
   // without visiting Settings first.
   setTimeout(() => {
     try {
-      const packages = require('./spotiflac/packages').service(getDB())
-      // Only for people using SpotiFLAC sources: nothing is fetched otherwise.
-      if (packages.list().length || packages.repos().length > 1) packages.refreshDue(0).catch(e => console.error('SpotiFLAC repository refresh:', e.message))
-    } catch (e) { console.error('SpotiFLAC repository refresh:', e.message) }
+      const packages = require('./mornye/packages').service(getDB())
+      // Only for people using Mornye sources: nothing is fetched otherwise.
+      if (packages.list().length || packages.repos().length > 1) packages.refreshDue(0).catch(e => console.error('Mornye repository refresh:', e.message))
+    } catch (e) { console.error('Mornye repository refresh:', e.message) }
   }, 8000).unref?.()
 
+
+  ipcMain.on('app:setAccentIcon', (_, dataUrl) => {
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,') || dataUrl.length > 2 * 1024 * 1024) return
+    const image = nativeImage.createFromDataURL(dataUrl)
+    if (image.isEmpty()) return
+    accentIcon = image
+    try {
+      if (process.platform === 'darwin') app.dock?.setIcon(image)
+      else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setIcon(image)
+      if (tray && !tray.isDestroyed()) tray.setImage(trayImage(image))
+    } catch (e) { log.warn('[icon] Could not apply the accent icon:', e.message) }
+  })
 
   ipcMain.on('relaunch-app', () => {
     app.relaunch()
@@ -665,13 +711,26 @@ app.whenReady().then(() => {
       return { ...fallback, serverReachable: false, error: e?.message || 'Could not reach the remote server', platform: process.platform }
     }
   })
-  setRemoteCommandHandler(async (command) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      return { error: 'Main window unavailable' }
-    }
-    mainWindow.webContents.send('remote:command', command || {})
-    return { ok: true }
+  require('./ipc/remote').events.on('library', detail => { if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('library:changed',detail) })
+  const linkRequests = new Map()
+  ipcMain.on('remote:commandResult', (event, id, result) => {
+    if (event.sender !== mainWindow?.webContents) return
+    const pending = linkRequests.get(id)
+    if (pending) { clearTimeout(pending.timer); linkRequests.delete(id); pending.resolve(result) }
   })
+  setRemoteCommandHandler(command => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { error: 'Main window unavailable' }
+    const id = require('crypto').randomUUID()
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { linkRequests.delete(id); resolve({error:'The desktop player did not respond.'}) }, 6000)
+      linkRequests.set(id,{resolve,timer})
+      mainWindow.webContents.send('remote:command',{...command,_requestId:id})
+    })
+  })
+  ipcMain.handle('remote:createPairing', () => require('./link').getLink()?.createPairing())
+  ipcMain.handle('remote:listDevices', () => require('./link').getLink()?.devices() || [])
+  ipcMain.handle('remote:revokeDevice', (_, id) => require('./link').getLink()?.revoke(String(id)))
+  ipcMain.handle('remote:commandDevice', (_, {id,command}) => require('./link').getLink()?.commandDevice(String(id),command))
   ipcMain.handle('dialog:openFolder', async () => {
     const r = await require('electron').dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })
     return r.filePaths[0] || null
@@ -709,6 +768,25 @@ app.whenReady().then(() => {
     }
   }
 });
+
+  
+ipcMain.handle('tv:setFullscreen', (_, enabled) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false
+  mainWindow.setFullScreen(!!enabled)
+  return true
+})
+
+ipcMain.handle('tv:setZoom', (_, factor) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false
+
+  const zoom = Number(factor)
+  if (!Number.isFinite(zoom)) return false
+
+  mainWindow.webContents.setZoomFactor(
+    Math.max(0.5, Math.min(2, zoom))
+  )
+  return true
+})
 
 ipcMain.handle('window:minimize', () => mainWindow?.minimize())
 // Whether the window is minimized or hidden now, for a page that subscribes
@@ -839,6 +917,16 @@ if (bootFilePath) {
 }
 
 ipcMain.handle('shell:openExternal', (_, url) => shell.openExternal(url))
+ipcMain.handle('shell:showItemInFolder', (_, filePath) => {
+  try {
+    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) return { ok: false, error: 'Invalid file path' }
+    if (!fs.statSync(filePath).isFile()) return { ok: false, error: 'Not a file' }
+    shell.showItemInFolder(filePath)
+    return { ok: true }
+  } catch {
+    return { ok: false, error: 'File not found' }
+  }
+})
 ipcMain.on('open-logs', () => {
   const logFile = log.transports.file.getFile().path;
   const logDir = path.dirname(logFile);
@@ -858,6 +946,7 @@ ipcMain.handle('updater:install', () => {
   }, 500);
 });
   ipcMain.handle('updater:check', () => {
+    if (IS_WINDOWS_STORE) return { store: true, version: app.getVersion() }
     if (IS_NIGHTLY) return { nightly: true, version: app.getVersion() }
     autoUpdater.checkForUpdates()
     return { checking: true }
@@ -865,9 +954,23 @@ ipcMain.handle('updater:install', () => {
   ipcMain.handle('app:getVersion', () => {
     return app.getVersion()
   })
+  ipcMain.handle('app:isWindowsStore', () => IS_WINDOWS_STORE)
 
   // macOS: its window back from the Dock (hidden helper windows don't count).
-  app.on('activate', () => { if (!mainWindow || mainWindow.isDestroyed()) createWindow() })
+  app.on('activate', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+    try {
+      const db = require('./ipc/db').getDB()
+      const plural = db.prepare("SELECT value FROM settings WHERE key = 'music_folders'").get()?.value
+      let folders = []
+      try { folders = Array.isArray(JSON.parse(plural || 'null')) ? JSON.parse(plural) : [] } catch {}
+      if (!folders.length) {
+        const legacy = db.prepare("SELECT value FROM settings WHERE key = 'music_folder'").get()?.value
+        if (legacy) folders = [legacy]
+      }
+      if (folders.length) require('./libraryWatcher').watchLibraryRoots(folders)
+    } catch (error) { console.warn('[libraryWatcher] Could not resume watching on activate:', error.message) }
+  })
   app.on('open-url', (event, url) => {
     event.preventDefault()
     const token = extractLastfmAuthToken(url)
@@ -878,8 +981,13 @@ ipcMain.handle('updater:install', () => {
 
   if (!app.isPackaged) {
     console.log('[updater] skipping in dev mode')
+  } else if (IS_WINDOWS_STORE) {
+    console.log('[updater] Microsoft Store build: updates come from the Store')
   } else if (IS_NIGHTLY) {
     console.log(`[updater] nightly build (${app.getVersion()}): not checking for stable updates`)
+  } else if ((() => { try { return require('./ipc/db').getDB().prepare("SELECT value FROM settings WHERE key = 'auto_update'").get()?.value === '0' } catch { return false } })()) {
+    // Settings > About > Automatic Updates off: only "Check for updates" looks.
+    console.log('[updater] automatic update checks are off')
   } else {
     setTimeout(() => {
       autoUpdater.checkForUpdates().catch(err => {
@@ -889,6 +997,7 @@ ipcMain.handle('updater:install', () => {
   }
 })
 app.on('window-all-closed', () => {
+  try { require('./libraryWatcher').stopWatching() } catch {}
   if (process.platform !== 'darwin' || isUpdating) {
     app.quit();
   }
@@ -901,7 +1010,7 @@ app.on('will-quit', () => {
   try { require('./online/poToken').reset() } catch {}
   for (const window of BrowserWindow.getAllWindows()) { try { if (!window.isDestroyed()) window.destroy() } catch {} }
   try { shutdownActiveDownloads() } catch {}
-  try { require('./spotiflac/packages').shutdown(require('./ipc/db').getDB()) } catch {}
+  try { require('./mornye/packages').shutdown(require('./ipc/db').getDB()) } catch {}
   unregisterMediaShortcuts()
   try { stopSmtcBridge() } catch {}
 })

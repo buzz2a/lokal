@@ -111,13 +111,15 @@ async function fetchStream(provider, id, { range, fetchImpl = fetch, signal, ...
   const attempt = async (force) => {
     let stream
     try {
+      opts.onPhase?.('resolving')
       stream = await resolveStream(provider, id, { ...opts, force, signal })
+      opts.onPhase?.('fetching')
     } catch (error) {
       throw withStreamErrorStage(error, 'resolve')
     }
     try {
-      if (stream.type === 'live') return { stream, res: await require('../spotiflac/media').liveResponse(stream.job, { range, signal, mime: stream.mime }) }
-      if (stream.type === 'file') return { stream, res: await require('../spotiflac/media').fileResponse(stream.file, { range, signal, mime: stream.mime }) }
+      if (stream.type === 'live') return { stream, res: await require('../mornye/media').liveResponse(stream.job, { range, signal, mime: stream.mime }) }
+      if (stream.type === 'file') return { stream, res: await require('../mornye/media').fileResponse(stream.file, { range, signal, mime: stream.mime }) }
       const headers = { ...stream.headers }
       if (range) headers.Range = range
       // An addon's media URL is the addon's to choose: follow its redirects one
@@ -142,15 +144,24 @@ async function fetchStream(provider, id, { range, fetchImpl = fetch, signal, ...
  * stream: skipped, seeked, ended) calls `abort`. Cancelling the body alone
  * doesn't close the request it came from.
  */
-function cancellableBody(body, abort) {
+function cancellableBody(body, abort, onFirstChunk) {
   if (!body?.getReader) return body
   const reader = body.getReader()
+  let reported = false
   return new ReadableStream({
     async pull(controller) {
       try {
         const { done, value } = await reader.read()
         if (done) controller.close()
-        else controller.enqueue(value)
+        else {
+          // One startup event only. Avoid streaming IPC updates (and a second
+          // TransformStream) for every packet throughout the entire song.
+          if (!reported && value?.byteLength) {
+            reported = true
+            try { onFirstChunk?.(value.byteLength) } catch {}
+          }
+          controller.enqueue(value)
+        }
       } catch (e) { controller.error(e) }
     },
     cancel(reason) {
@@ -387,29 +398,7 @@ function setSongLike(db, userId, trackId, liked) {
  * Keep online songs as ghost tracks, so they can be played, liked and added
  * to playlists. Returns the track rows (null for unusable items), in order.
  */
-/**
- * What a source says of a stream's quality ("FLAC 16/44.1", "MP3 320"):
- * { codec, lossless, bit_depth, sample_rate, bitrate } (nulls when unknown).
- */
-function streamQuality(format) {
-  const text = String(format || '').trim()
-  const out = { codec: null, lossless: null, bit_depth: null, sample_rate: null, bitrate: null }
-  if (!text) return out
-  const codec = text.match(/^(flac|alac|wav|aiff|mp3|aac|opus|ogg|vorbis|m4a)\b/i)?.[1]?.toLowerCase()
-  if (codec) {
-    out.codec = codec
-    out.lossless = ['flac', 'alac', 'wav', 'aiff'].includes(codec) ? 1 : 0
-  }
-  const hires = text.match(/(\d{2})\s*(?:-?\s*bits?)?\s*[-/·,]\s*(\d{2,3}(?:\.\d+)?)\s*(?:k\s*hz)?/i)
-  if (out.lossless && hires) {
-    out.bit_depth = Number(hires[1])
-    out.sample_rate = Math.round(Number(hires[2]) * 1000)
-  } else if (out.lossless === 0) {
-    const kbps = Number(text.match(/(\d{2,4})\s*(?:kbps|k)?\s*$/i)?.[1])
-    if (kbps >= 32 && kbps <= 2000) out.bitrate = kbps
-  }
-  return out
-}
+const { streamQuality } = require('./streamQuality')
 
 const year = value => (Number(value) >= 1000 && Number(value) <= 2999 ? Math.floor(Number(value)) : null)
 const positive = value => (Number(value) > 0 && Number(value) < 1000 ? Math.floor(Number(value)) : null)

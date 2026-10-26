@@ -9,7 +9,7 @@ const { findYtDlp, findFfmpeg, findFfprobe } = require('./tools')
 const { getDownloadManager } = require('../download/manager')
 const { runJsonSearch, mapSearchResult, mapArtistResult } = require('../download/search')
 const slskd = require('../download/slskd')
-const { playableCopy } = require('../download/convert')
+const { playableCopy, probe, playbackCopyFailure } = require('../download/convert')
 
 const searchProcesses = new Set()
 
@@ -86,6 +86,7 @@ function manager() {
     findTools: () => ({ ytdlp: findYtDlp(), ffmpeg: findFfmpeg(), ffprobe: findFfprobe() }),
     // A fresh link for an addon download, right before it starts.
     resolveAddonUrl: async (provider, id) => (await require('../online/sources').resolveStream(provider, id, { db: getDB(), force: true })).url,
+    verifyAddonAccess: key => require('../mornye/api').dispatch(getDB(), { action: 'package.verifyAndWait', key }),
     requireFfmpeg: true,
     index: async (filepath, opts) => {
       const { indexSingleFile } = require('./scanner')
@@ -109,14 +110,14 @@ function manager() {
       try { status = await getYtDlpVersionStatus() } catch {}
       if (status?.upToDate === true) return { updated: false, upToDate: true, version: status.installedVersion }
       try {
-        await downloadYtDlp(progress => broadcast('tools:downloadProgress', { tool: 'yt-dlp', ...progress }))
+        await downloadYtDlp(progress => broadcast('tools:downloadProgress', { tool: 'yt-dlp', auto: true, ...progress }))
       } catch (e) {
-        broadcast('tools:downloadProgress', { tool: 'yt-dlp', status: 'error', message: e.message })
+        broadcast('tools:downloadProgress', { tool: 'yt-dlp', auto: true, status: 'error', message: e.message })
         throw e
       }
       let after = null
       try { after = await getYtDlpVersionStatus() } catch {}
-      broadcast('tools:downloadProgress', { tool: 'yt-dlp', status: 'done', message: `yt-dlp updated${after?.installedVersion ? ` to ${after.installedVersion}` : ''}. Retrying your downloads.` })
+      broadcast('tools:downloadProgress', { tool: 'yt-dlp', auto: true, status: 'done', message: `yt-dlp updated${after?.installedVersion ? ` to ${after.installedVersion}` : ''}. Retrying your downloads.` })
       return { updated: true, version: after?.installedVersion || null }
     },
     downloadMusicVideo: (videoId, opts) => {
@@ -196,7 +197,17 @@ function registerDownloaderHandlers(ipcMain) {
     let known = null
     try { known = getDB().prepare('SELECT file_path FROM tracks WHERE file_path = ? OR REPLACE(file_path, char(92), \'/\') = ?').get(filePath, filePath.replace(/\\/g, '/')) } catch {}
     if (!known || norm(known.file_path) !== norm(filePath)) return null
-    return playableCopy(known.file_path, { ffmpeg: findFfmpeg(), cacheDir: require('path').join(getStorageDir(), 'playback-cache') })
+    const ffmpeg = findFfmpeg()
+    const info = await probe(known.file_path)
+    const failure = playbackCopyFailure(info, ffmpeg)
+    if (failure) return { path: null, error: failure }
+
+    const copy = await playableCopy(known.file_path, { ffmpeg, cacheDir: require('path').join(getStorageDir(), 'playback-cache') })
+    // FFmpeg was available and the conversion was attempted. Only now should
+    // the UI fall back to its generic "Can't play" message.
+    return copy
+      ? { path: copy, error: null }
+      : { path: null, error: 'conversion-failed' }
   })
 
   // Soulseek, through the slskd Lokal runs (slskdManaged.js).

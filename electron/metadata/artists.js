@@ -5,42 +5,23 @@
 
 const { resolveArtistId } = require('../artistId')
 
-const KEEP_COMMA_DEFAULTS = [
-  'tyler, the creator', 'earth, wind & fire', 'crosby, stills & nash',
-  'crosby, stills, nash & young', 'simon & garfunkel', 'emerson, lake & palmer',
-  'syd barrett', 'pete & bas', 'pe & ne',
-]
+const artistSplit = require('../artistSplit')
 
 /** Names whose comma is part of the name (the defaults plus Settings' list), lower case. */
 function keepCommaArtists(db) {
-  const keepComma = new Set(KEEP_COMMA_DEFAULTS)
+  let userList = []
   try {
     const setting = db.prepare("SELECT value FROM settings WHERE key = 'keep_comma_artists'").get()
-    if (setting?.value) {
-      for (const artist of JSON.parse(setting.value)) keepComma.add(String(artist || '').toLowerCase().trim())
-    }
+    if (setting?.value) userList = JSON.parse(setting.value)
   } catch {}
-  return keepComma
+  return artistSplit.keepCommaSet(userList)
 }
 
-function splitArtists(raw, keepComma = new Set(KEEP_COMMA_DEFAULTS)) {
+/** The artists of a credit, split with electron/artistSplit.js and the user's separator words. */
+function splitArtists(raw, keepComma = artistSplit.keepCommaSet(), db = null) {
   if (!raw) return []
-  const lower = raw.toLowerCase().trim()
-  for (const known of keepComma) {
-    if (lower === known || lower.startsWith(known + ' ') || lower.endsWith(' ' + known)) return [raw.trim()]
-  }
-  const commaLowerPattern = /,\s+[a-z]/
-  if (commaLowerPattern.test(raw)) return [raw.trim()]
-  let artists = [raw]
-  artists = artists.flatMap(a => a.split(/\s+(?:feat\.|ft\.|featuring)\s+/i))
-  artists = artists.flatMap(a => a.split(/,\s+(?=[A-Z])/))
-  artists = artists.flatMap(a => {
-    const parts = a.split(/\s+(?:&|x|vs\.?)\s+/i)
-    // A split that leaves one-letter pieces isn't a collaboration but one
-    // stylised name ("h x m x d" was becoming the artists h, m and d).
-    return parts.some(part => part.trim().length < 2) ? [a] : parts
-  })
-  return [...new Set(artists.map(a => a.trim()).filter(Boolean))]
+  if (db) artistSplit.applySplitWordsFrom(db)
+  return artistSplit.splitArtists(raw, artistSplit.keepCommaSet([...keepComma]))
 }
 
 /**
@@ -54,7 +35,7 @@ function relinkTrackArtists(db, trackId, artist, { cleanup = true } = {}) {
   try { db.prepare('DELETE FROM artist_link_locks WHERE track_id = ?').run(trackId) } catch {}
   const row = db.prepare('SELECT file_path FROM tracks WHERE id = ?').get(trackId)
   if (row && !String(row.file_path || '').startsWith('ghost://')) {
-    for (const name of splitArtists(artist, keepCommaArtists(db))) {
+    for (const name of splitArtists(artist, keepCommaArtists(db), db)) {
       db.prepare('INSERT OR IGNORE INTO artist_track_links (artist_id, track_id) VALUES (?, ?)').run(resolveArtistId(db, name), trackId)
     }
   }

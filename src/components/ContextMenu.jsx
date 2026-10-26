@@ -53,19 +53,25 @@ export default function ContextMenu({ menu, id }) {
       // Only the menu closes (not a selection behind it, too).
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close() }
     }
+    const onScroll = (event) => {
+      // Lyrics follow mode changes scrollTop on every focused-line handover.
+      // These are presentation updates, not a user scroll that should dismiss a menu.
+      if (event.target?.closest?.('[data-lyrics-auto-follow="true"]')) return
+      close()
+    }
     window.addEventListener('mousedown', onPointer, true)
     window.addEventListener('contextmenu', onPointer, true)
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('resize', close)
     window.addEventListener('blur', close)
-    document.addEventListener('scroll', close, true)
+    document.addEventListener('scroll', onScroll, true)
     return () => {
       window.removeEventListener('mousedown', onPointer, true)
       window.removeEventListener('contextmenu', onPointer, true)
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('resize', close)
       window.removeEventListener('blur', close)
-      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('scroll', onScroll, true)
     }
   }, [state, close])
 
@@ -110,7 +116,7 @@ export default function ContextMenu({ menu, id }) {
           className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors disabled:cursor-default disabled:opacity-40 ${active === index ? (item.danger ? 'bg-red-500/15 text-red-300' : 'bg-white/10 text-white') : item.danger ? 'text-red-400' : 'text-white/85'}`}
         >
           {item.icon && <item.icon size={14} className="flex-shrink-0 opacity-80" />}
-          <span className="min-w-0 flex-1 truncate">{t(item.label)}</span>
+          <span className="min-w-0 flex-1 truncate">{t(item.label, item.labelValues)}</span>
           {item.hint && <span className="flex-shrink-0 text-[11px] text-muted">{t(item.hint)}</span>}
         </button>
       ))}

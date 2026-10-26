@@ -15,7 +15,6 @@
 //
 // Shared by the desktop app (IPC) and the web server; nothing here needs Electron.
 
-const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 const { relinkTrackArtists, dropOrphanArtists } = require('./artists')
@@ -27,6 +26,7 @@ const FIELD_TYPES = {
   danceability: 'real', energy: 'real', track_key: 'int', loudness: 'real', mode: 'int',
   speechiness: 'real', acousticness: 'real', instrumentalness: 'real', liveness: 'real',
   valence: 'real', tempo: 'real', time_signature: 'int', artwork_path: 'text',
+  clip_url: 'text', clip_start: 'real', clip_end: 'real', clip_zoom: 'real',
 }
 const FIELDS = Object.keys(FIELD_TYPES)
 // Values that only make sense together: locked, sourced and undone as one.
@@ -376,10 +376,12 @@ async function applyBatchOperations(db, trackIds = [], operations = {}, { storag
   const tracks = ids.map(id => db.prepare('SELECT * FROM tracks WHERE id = ?').get(id)).filter(Boolean)
   if (!tracks.length) return []
   const artworkOp = operations.artwork
+  const artworkPaths = new Map()
   if (artworkOp?.mode === 'replace' && artworkOp?.value && storageDir) {
-    const bytes = Buffer.from(String(artworkOp.value).split(',')[1] || '', 'base64')
-    fs.mkdirSync(path.join(storageDir, 'artwork'), { recursive: true })
-    for (const track of tracks) fs.writeFileSync(path.join(storageDir, 'artwork', `${track.id}.jpg`), bytes)
+    const cover = await require('../fileArtwork').normalizeArtwork(artworkOp.value)
+    for (const track of tracks) {
+      artworkPaths.set(track.id, await require('../artwork/thumb').writeCover(path.join(storageDir, 'artwork'), String(track.id), cover, { overwrite: true }))
+    }
   }
   const changes = tracks.map(track => {
     const fields = {}
@@ -388,7 +390,7 @@ async function applyBatchOperations(db, trackIds = [], operations = {}, { storag
       if (result.changed) fields[field] = result.value
     }
     if (artworkOp?.mode === 'clear' && track.artwork_path) fields.artwork_path = null
-    else if (artworkOp?.mode === 'replace' && artworkOp?.value && storageDir) fields.artwork_path = path.join(storageDir, 'artwork', `${track.id}.jpg`)
+    else if (artworkPaths.has(track.id)) fields.artwork_path = artworkPaths.get(track.id)
     return { trackId: track.id, fields }
   })
   return applyMany(db, changes, { source: 'user' }).tracks

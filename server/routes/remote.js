@@ -6,6 +6,7 @@ const { smartTracks, playlistRules } = require('../../electron/playlists/smart')
 const router = express.Router()
 
 function authorized(req) {
+  if (req.linkDevice || require('../../electron/link').getLink()?.auth(req.headers['x-remote-token'])) return true
   const token = String(process.env.REMOTE_TOKEN || '').trim()
   if (!token) return true
   const provided = req.headers['x-remote-token'] || req.query.token || req.body?.token
@@ -15,6 +16,157 @@ function authorized(req) {
 router.use((req, res, next) => {
   if (!authorized(req)) return res.status(401).json({ error: 'Unauthorized' })
   next()
+})
+
+// Profile and original audio are available only to the individually paired
+// phone belonging to the active desktop user, never the legacy shared token.
+function pairedUser(req, res) {
+  const device = req.linkDevice
+  const userId = String(getRemoteState().userId || 'guest')
+  if (!device || device.legacy || device.user_id !== userId) {
+    res.status(403).json({ error: 'Pair this phone with the active desktop user first.' })
+    return null
+  }
+  return userId
+}
+
+function profileFor(userId) {
+  return getDB().prepare('SELECT id, username, display_name, avatar_path FROM users WHERE id = ?').get(userId)
+}
+
+router.get('/profile', (req, res) => {
+  const userId = pairedUser(req, res)
+  if (!userId) return
+  const user = profileFor(userId)
+  let avatarVersion = null
+  if (user?.avatar_path) {
+    try {
+      const stat = require('fs').statSync(user.avatar_path)
+      if (stat.isFile() && stat.size <= 5 * 1024 * 1024) avatarVersion = `${stat.mtimeMs}:${stat.size}`
+    } catch {}
+  }
+  res.set('Cache-Control', 'no-store')
+  res.json({ profile: user ? {
+    id: user.id, username: user.username, displayName: user.display_name,
+    hasAvatar: avatarVersion !== null, avatarVersion,
+  } : null })
+})
+
+router.get('/profile/avatar', (req, res) => {
+  const userId = pairedUser(req, res)
+  if (!userId) return
+  const avatar = profileFor(userId)?.avatar_path
+  try {
+    const stat = require('fs').statSync(avatar)
+    if (!stat.isFile() || stat.size > 5 * 1024 * 1024) return res.sendStatus(404)
+    res.set('Cache-Control', 'private, no-cache')
+    res.sendFile(require('path').resolve(avatar))
+  } catch { res.sendStatus(404) }
+})
+
+router.post('/library/lyrics', async (req, res) => {
+  if (!pairedUser(req, res)) return
+  const ids = req.body?.ids
+  if (!Array.isArray(ids) || ids.length > 50 || ids.some(id => typeof id !== 'string' || id.length > 512)) {
+    return res.status(400).json({ error: 'Expected up to 50 track IDs' })
+  }
+  try {
+    const { exportedLyrics } = require('../../electron/link/lyricsExport')
+    const db = getDB()
+    const hasMeta = db.prepare('PRAGMA table_info(lyrics_cache)').all().some(c => c.name === 'meta')
+    const select = db.prepare(`SELECT t.id,t.file_path,l.content,l.lyrics_type,l.source,${hasMeta ? 'l.meta' : 'NULL AS meta'}
+      FROM tracks t LEFT JOIN lyrics_cache l ON l.track_id=t.id
+      WHERE t.id=? AND t.file_path NOT LIKE 'ghost://%'`)
+    const items = []
+    let bytes = 0
+    for (const id of new Set(ids)) {
+      const row = select.get(id)
+      if (!row) continue
+      const lyrics = await exportedLyrics(row)
+      if (!lyrics) continue
+      const item = { id: String(row.id), lyrics }
+      const size = Buffer.byteLength(JSON.stringify(item))
+      if (size > 2 * 1024 * 1024 || bytes + size > 4 * 1024 * 1024) continue
+      bytes += size
+      items.push(item)
+    }
+    res.set('Cache-Control', 'private, no-store').json({ items })
+  } catch (error) {
+    console.error('[remote] Lyrics export failed:', error.message)
+    res.status(500).json({ error: 'Could not export saved lyrics' })
+  }
+})
+
+router.get('/files', (req, res) => {
+  if (!pairedUser(req, res)) return
+  res.json({ originalFiles: true, contentMatching: true, sizeMatching: true })
+})
+
+// A blocked filesystem or disconnected phone must not leave a preview running
+// indefinitely. Checks also stop further stat/hash work after the response ends.
+async function boundedFileCheck(res, work, milliseconds) {
+  let expired = false
+  const check = () => {
+    if (expired || res.destroyed) throw new Error('File comparison stopped')
+  }
+  let timer
+  try {
+    return await Promise.race([
+      work(check),
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        expired = true
+        reject(new Error('File comparison timed out'))
+      }, milliseconds) }),
+    ])
+  } finally { clearTimeout(timer) }
+}
+
+router.post('/files/sizes', async (req, res) => {
+  if (!pairedUser(req, res)) return
+  const sizes = req.body?.sizes
+  if (!Array.isArray(sizes) || sizes.length > 2048 || sizes.some(size =>
+    !Number.isSafeInteger(size) || size <= 0 || size > 1024 * 1024 * 1024)) {
+    return res.status(400).json({ error: 'Expected up to 2048 file sizes' })
+  }
+  try {
+    const { candidateOriginalSizes } = require('../phoneFileMatch')
+    const candidates = await boundedFileCheck(res, check => candidateOriginalSizes(getDB(), sizes, { check }), 15000)
+    if (!res.destroyed) res.set('Cache-Control', 'private, no-store').json({ sizes: candidates })
+  } catch {
+    if (!res.destroyed) res.status(503).json({ error: 'Desktop file-size check did not finish. Reconnect and retry.' })
+  }
+})
+
+router.post('/files/match', async (req, res) => {
+  if (!pairedUser(req, res)) return
+  const items = req.body?.items
+  if (!Array.isArray(items) || items.length > 32 || items.some(item =>
+    !item || !Number.isSafeInteger(item.size) || item.size <= 0 || item.size > 1024 * 1024 * 1024 ||
+    typeof item.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(item.sha256))) {
+    return res.status(400).json({ error: 'Expected up to 32 audio fingerprints' })
+  }
+  try {
+    const { resolvePhoneFiles } = require('../phoneFileMatch')
+    const matches = await boundedFileCheck(res, check => resolvePhoneFiles(getDB(), items, { check }), 25000)
+    // Preview must not probe metadata or rebuild artwork before responding.
+    if (!res.destroyed) res.set('Cache-Control', 'private, no-store').json({ matches })
+  } catch {
+    if (!res.destroyed) res.status(503).json({ error: 'Desktop content check did not finish. Reconnect and retry.' })
+  }
+})
+
+router.get('/files/:trackId', (req, res) => {
+  if (!pairedUser(req, res)) return
+  const track = getDB().prepare('SELECT file_path, file_hash FROM tracks WHERE id = ?').get(req.params.trackId)
+  if (!track || track.file_path.startsWith('ghost://')) return res.sendStatus(404)
+  try {
+    const stat = require('fs').statSync(track.file_path)
+    if (!stat.isFile()) return res.sendStatus(404)
+    // Unlike /api/stream, this never substitutes a playback transcode.
+    res.set('Cache-Control', 'private, no-store')
+    if (/^[a-fA-F0-9]{64}$/.test(track.file_hash || '')) res.set('X-Content-SHA256', track.file_hash)
+    res.type('application/octet-stream').sendFile(require('path').resolve(track.file_path))
+  } catch { res.sendStatus(404) }
 })
 
 function queryText(value) {
@@ -40,12 +192,19 @@ function compactTrack(track) {
     artist: track.artist || 'Unknown artist',
     album: track.album || '',
     album_artist: track.album_artist || '',
+    genre: track.genre || '',
+    genres: track.genres || null,
     duration: Number(track.duration) || 0,
+    bitrate: Number(track.bitrate) || null,
+    sample_rate: Number(track.sample_rate) || null,
+    bit_depth: Number(track.bit_depth) || null,
     year: Number(track.year) || null,
     track_num: Number(track.track_num) || null,
     play_count: Number(track.play_count) || 0,
     liked: !!(track.user_liked ?? track.liked),
     hasArtwork: !!track.artwork_path,
+    file_hash: track.file_hash || null,
+    fileType: require('path').extname(track.file_path || '').slice(1).toLowerCase() || 'bin',
   }
 }
 
@@ -191,7 +350,7 @@ router.get('/library/playlists', (req, res) => {
     SELECT p.id, p.name, p.description, p.user_id, p.smart_rules,
       (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlist_id = p.id) AS track_count,
       (SELECT t.id FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id
-       WHERE pt.playlist_id = p.id AND NULLIF(t.artwork_path, '') IS NOT NULL ORDER BY pt.position LIMIT 1) AS coverTrackId
+       WHERE pt.playlist_id = p.id AND NULLIF(t.artwork_path, '') IS NOT NULL ORDER BY pt.position, link_track_key(t.artist,t.title,t.duration) LIMIT 1) AS coverTrackId
     FROM playlists p WHERE ${whereSql}
     ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?
   `).all(...params, limit, offset)
@@ -222,7 +381,7 @@ router.get('/library/playlist-tracks', (req, res) => {
     ? smartTracks(db, playlist.smart_rules, playlist.user_id)
     : db.prepare(`
         SELECT t.* FROM tracks t JOIN playlist_tracks pt ON pt.track_id = t.id
-        WHERE pt.playlist_id = ? ORDER BY pt.position
+        WHERE pt.playlist_id = ? ORDER BY pt.position, link_track_key(t.artist,t.title,t.duration)
       `).all(playlistId)
   const ids = (Array.isArray(tracks) ? tracks : []).map(track => track?.id).filter(Boolean)
   if (!ids.length) return res.json({ items: [], total: 0 })

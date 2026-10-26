@@ -10,6 +10,7 @@ export function codecName(codec) {
   const c = String(codec || '')
   if (!c) return ''
   if (/layer\s*3|mp3/i.test(c)) return 'MP3'
+  if (/e-?ac-?3|ec-?3|joc/i.test(c)) return 'E-AC-3'
   if (/aac|mp4a/i.test(c)) return 'AAC'
   if (/opus/i.test(c)) return 'Opus'
   if (/vorbis/i.test(c)) return 'Vorbis'
@@ -24,10 +25,32 @@ export function codecName(codec) {
 
 /** hires | lossless | high | low | unknown */
 export function tierOf(track) {
+  if (Number(track?.atmos_verified) === 1) return 'atmos'
   if (!track || track.lossless === null || track.lossless === undefined) return 'unknown'
   if (Number(track.lossless) === 1) return Number(track.bit_depth) > 16 || Number(track.sample_rate) > 48000 ? 'hires' : 'lossless'
-  const kbps = Number(track.bitrate) || 0
-  return kbps && kbps >= (OPUS_LIKE.test(String(track.codec || '')) ? 160 : 256) ? 'high' : 'low'
+  const kbps = Number(track.bitrate)
+  if (!Number.isFinite(kbps) || kbps <= 0) return 'unknown'
+  return kbps >= (OPUS_LIKE.test(String(track.codec || '')) ? 160 : 256) ? 'high' : 'low'
+}
+
+/** Catalogue metadata only: never a statement about the active decoder/output.
+ * Distinct from hi-res/lossless tiers (Atmos is spatial presentation).
+ */
+export function atmosAvailable(track) {
+  return track?.atmos_available === true || Number(track?.atmos_available) === 1 ||
+    [track?.audio_mode, track?.audioMode, track?.audio_quality, track?.audioQuality]
+      .some(value => typeof value === 'string' && /^(?:DOLBY[_ -]?ATMOS|ATMOS)$/i.test(value.trim())) ||
+    [track?.audio_modes, track?.audioModes]
+      .some(value => {
+        const modes = Array.isArray(value) ? value : [value]
+        return modes.some(mode => /^(?:DOLBY[_ -]?ATMOS|ATMOS)$/i.test(String(mode || '').trim()))
+      })
+}
+
+export const ATMOS_AVAILABLE = {
+  label: 'Dolby Atmos',
+  hint: 'Dolby Atmos version advertised by Tidal. Does not mean the current stream or output is Atmos.',
+  className: 'bg-black text-white border-white/25',
 }
 
 /** Did the spectrum check say this lossless file came from a lossy one? */
@@ -37,6 +60,7 @@ export function isSuspect(track) {
 }
 
 export const TIERS = {
+  atmos: { label: 'Dolby Atmos', desc: 'Verified E-AC-3 JOC spatial file', hint: 'Atmos metadata was verified in this downloaded or local audio file.', className: 'bg-black text-white border-white/25' },
   hires: { label: 'Hi-res', desc: 'Above CD quality', hint: 'Lossless, more than 16-bit or 48 kHz', className: 'bg-violet-500/15 text-violet-300 border-violet-400/25' },
   lossless: { label: 'Lossless', desc: 'CD quality', hint: 'Lossless, 16-bit up to 48 kHz', className: 'bg-green-500/15 text-green-300 border-green-400/25' },
   high: { label: 'High', desc: 'Lossy, 256 kbps and up', hint: 'MP3/AAC at 256 kbps or more, Opus/Vorbis at 160 kbps or more', className: 'bg-sky-500/15 text-sky-300 border-sky-400/25' },
@@ -47,6 +71,7 @@ export const TIERS = {
 
 /** "FLAC · 24-bit / 96 kHz", "MP3 · 128 kbps"... */
 export function formatLabel(track) {
+  if (Number(track?.atmos_verified) === 1) return 'E-AC-3 JOC · Dolby Atmos'
   const name = codecName(track?.codec)
   if (!name) return track?.bitrate ? `${track.bitrate} kbps` : ''
   if (Number(track.lossless) === 1) {
@@ -119,6 +144,9 @@ export function storeSearches({ artist, title }) {
 export function canGetLossless(track) {
   const path = String(track?.file_path || '')
   if (!track?.id || !path || path.startsWith('ghost://') || track.missing) return false
+  // Atmos is a distinct spatial presentation, not a conventional low-quality
+  // recording that should automatically be replaced with stereo FLAC.
+  if (Number(track.atmos_verified) === 1) return false
   if (peekSettings()?.get_lossless_any_song === '1') return true
   return Number(track.lossless) !== 1 || isSuspect(track)
 }
@@ -131,7 +159,7 @@ export function losslessMenuItem(track, icon) {
 /** "Get N songs in lossless…" for a selection, or null when none of it can be upgraded. */
 export function losslessManyMenuItem(tracks, icon) {
   const count = (tracks || []).filter(canGetLossless).length
-  return count ? { label: `Get ${count} song${count === 1 ? '' : 's'} in lossless…`, icon, onSelect: () => openLosslessMany(tracks) } : null
+  return count ? { label: 'Get {n} song in lossless…|Get {n} songs in lossless…', labelValues: { n: count }, icon, onSelect: () => openLosslessMany(tracks) } : null
 }
 
 /** Open "Get it in lossless" for several songs at once (BulkLosslessModal, in App). */

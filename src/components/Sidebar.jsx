@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react'
+import { usePanelWidths, usePanelWidth, PanelResizeHandle } from '../panelWidths.jsx'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Home, Library, Plus, Heart, LogIn, LogOut, BarChart2, Disc3, Users, AudioWaveform, PanelLeftClose, PanelLeftOpen, Sparkles, Import, Clapperboard, TrendingUp, Radar } from 'lucide-react'
+import { Plus, Heart, LogIn, LogOut, PanelLeftClose, PanelLeftOpen, Sparkles, Import, MoreHorizontal } from 'lucide-react'
 import { useAppStore } from '../store/player'
-import { api } from '../api'
+import { api, peekSettings } from '../api'
+import { SIDEBAR_ITEMS, sidebarNavOrder, splitSidebarNav } from '../sidebarNav'
 import { latestPeriod, listenerTimeZone, nextPeriodBoundary, recapOpened, recapTree } from '../recapPeriods'
 import PlaylistCover from './PlaylistCover'
 import { openSmartPlaylistEditor } from '../smartPlaylists'
@@ -10,17 +12,7 @@ import { openPlaylistImport } from '../playlistImport'
 import { getLastHomePath } from '../recommendationSession'
 import { useTranslation } from '../i18n'
 
-const NAV = [
-  { icon: Home, label: 'Home', path: '/' },
-  { icon: Library, label: 'Library', path: '/library', tour: 'library' },
-  { icon: BarChart2, label: 'Recap', path: '/recap' },
-  { icon: Disc3, label: 'Albums', path: '/albums', tour: 'albums' },
-  { icon: Users, label: 'Artists', path: '/artists', tour: 'artists' },
-  { icon: Clapperboard, label: 'Videos', path: '/videos' },
-  { icon: TrendingUp, label: 'Beatport', path: '/beatport' },
-  { icon: Radar, label: 'Shazam', path: '/shazam' },
-  { icon: AudioWaveform, label: 'Audio Quality', path: '/quality' },
-]
+
 
 // Collapsed, the sidebar shows only icons (their names on hover); the
 // choice is remembered.
@@ -53,11 +45,16 @@ export default function Sidebar() {
   const nav = useNavigate()
   const loc = useLocation()
   const { t } = useTranslation()
+  const freeform = usePanelWidths(s => s.freeform)
+  const panelWidth = usePanelWidth('left')
   const [playlists, setPlaylists] = useState([])
   const [showNewPlaylist, setShowNewPlaylist] = useState(false)
   const [newPlName, setNewPlName] = useState('')
   const [confirmSignOut, setConfirmSignOut] = useState(false)
   const [showRecapBadge, setShowRecapBadge] = useState(false)
+  const [sidebarNavValue, setSidebarNavValue] = useState(() => peekSettings()?.sidebar_nav || '')
+  const [moreOpen, setMoreOpen] = useState(false)
+  const { visible: visibleNav, hidden: hiddenNav } = splitSidebarNav(sidebarNavOrder(sidebarNavValue))
   
   const { user, openAuth, logout } = useAppStore()
   const [collapsed, setCollapsed] = useState(readCollapsed)
@@ -84,6 +81,17 @@ export default function Sidebar() {
   }
 
   useEffect(() => { loadPlaylists() }, [user?.id])
+
+  useEffect(() => {
+    const reloadSidebarNav = () => {
+      const cached = peekSettings()?.sidebar_nav
+      if (cached !== undefined) setSidebarNavValue(cached || '')
+      else api.getSettings().then(values => setSidebarNavValue(values?.sidebar_nav || '')).catch(() => {})
+    }
+    reloadSidebarNav()
+    window.addEventListener('lokal:settings-saved', reloadSidebarNav)
+    return () => window.removeEventListener('lokal:settings-saved', reloadSidebarNav)
+  }, [])
 
   useEffect(() => {
     const handler = () => loadPlaylists();
@@ -194,44 +202,25 @@ export default function Sidebar() {
   return (
     <aside
       aria-label={t("Sidebar")}
-      className={`${collapsed ? 'w-[4.5rem]' : 'w-56'} border-r border-border flex flex-col h-full pb-[var(--player-space,0px)] flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out`}
-      style={{ backgroundColor: 'rgba(var(--surface-rgb), 0.85)', backdropFilter: 'blur(12px)' }}
+      className={`${collapsed ? 'w-[4.5rem]' : freeform ? '' : 'w-56'} relative border-r border-border flex flex-col h-full pb-[var(--player-space,0px)] flex-shrink-0 overflow-hidden ${freeform ? '' : 'transition-[width] duration-200 ease-out'}`}
+      style={{ backgroundColor: 'rgba(var(--surface-rgb), 0.85)', backdropFilter: 'blur(12px)', ...(freeform && !collapsed ? { width: panelWidth } : {}) }}
     >
+      {!collapsed && <PanelResizeHandle side="left" />}
       <div className={`${collapsed ? 'px-0' : 'px-5'} py-4 flex-shrink-0`}>
         <div className={`flex items-center gap-2 ${collapsed ? 'flex-col' : ''}`}>
-          <div
-            className="w-7 h-7 rounded-lg flex-shrink-0 overflow-hidden flex items-center justify-center"
-            style={{
-              background: 'var(--logo-wrap-bg, transparent)',
-              boxShadow: 'var(--logo-wrap-shadow, none)',
-              border: 'var(--logo-wrap-border, 1px solid transparent)',
-              position: 'relative',
-            }}
-          >
-            <img
-              src="lokal-icon.png"
-              alt={t("Lokal")}
-              className="w-7 h-7 rounded-lg flex-shrink-0"
-              style={{
-                filter: 'var(--logo-image-filter, none)',
-                opacity: 'var(--logo-image-opacity, 1)',
-              }}
-            />
+          {/* The logo's sticker takes the theme's accent colour: an accent
+              layer cut to the sticker's shape (lokal-icon-sticker.png) over it. */}
+          <div className="relative w-7 h-7 flex-shrink-0 rounded-full overflow-hidden">
+            <img src="lokal-icon.png" alt={t("Lokal")} className="w-7 h-7" />
             <span
               aria-hidden="true"
-              className="absolute inset-0 rounded-lg"
+              className="absolute inset-0"
               style={{
-                opacity: 'var(--logo-mask-opacity, 0)',
-                background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%)',
-                mixBlendMode: 'screen',
-                WebkitMaskImage: "url('lokal-icon.png')",
-                WebkitMaskSize: 'cover',
-                WebkitMaskPosition: 'center',
-                WebkitMaskRepeat: 'no-repeat',
-                maskImage: "url('lokal-icon.png')",
-                maskSize: 'cover',
-                maskPosition: 'center',
-                maskRepeat: 'no-repeat',
+                background: 'var(--accent)',
+                WebkitMaskImage: "url('lokal-icon-sticker.png')",
+                WebkitMaskSize: '100% 100%',
+                maskImage: "url('lokal-icon-sticker.png')",
+                maskSize: '100% 100%',
               }}
             />
           </div>
@@ -323,11 +312,22 @@ export default function Sidebar() {
       </div>
 
       <nav className="px-3 space-y-0.5 flex-shrink-0">
-        {NAV.map(({ icon, label, path, tour }) => (
+        {visibleNav.map(({ icon, label, path, tour }) => (
           <NavItem key={path} icon={icon} label={t(label)} tour={tour} collapsed={collapsed}
             active={isNavItemActive(path)} onClick={() => nav(path === '/' ? getLastHomePath(user?.id) : path)}
             badge={path === '/recap' && showRecapBadge} />
         ))}
+        {hiddenNav.length > 0 && (
+          <>
+            <NavItem icon={MoreHorizontal} label={t('More')} collapsed={collapsed}
+              active={hiddenNav.some(item => isNavItemActive(item.path))} onClick={() => setMoreOpen(value => !value)} />
+            {moreOpen && hiddenNav.map(({ icon, label, path, tour }) => (
+              <NavItem key={path} icon={icon} label={t(label)} tour={tour} collapsed={collapsed}
+                active={isNavItemActive(path)} onClick={() => nav(path === '/' ? getLastHomePath(user?.id) : path)}
+                badge={path === '/recap' && showRecapBadge} />
+            ))}
+          </>
+        )}
       </nav>
 
       <div className={`${collapsed ? 'mx-3' : 'mx-4'} my-2 border-t border-border flex-shrink-0`} />

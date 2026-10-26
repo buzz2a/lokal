@@ -83,6 +83,7 @@ export function loadAddonNames() {
 /** "YouTube", "SoundCloud", an addon's name, "Soulseek", "Web"; null for the music folder's own files. */
 export function downloadSourceLabel(source, names = {}) {
   if (!source) return null
+  if (source === 'mobile') return 'Mobile'
   return DOWNLOAD_SOURCE_LABELS[source] || (isAddonProvider(source) ? (names[source] || 'Addon') : null)
 }
 
@@ -94,8 +95,16 @@ export function isPlayable(track) {
 /** Cover to show for a track: its artwork file, or an online song's remote cover. */
 export function trackArtURL(track) {
   if (!track) return null
-  if (track.artwork_path) return api.isElectron ? `file://${track.artwork_path}` : api.artworkURL(track.id)
+  if (track.artwork_path) return api.isElectron ? 'file://' + track.artwork_path : api.artworkURL(track.id)
   return track.artwork_url || null
+}
+
+/** The cover for a large surface; generated thumbnails resolve to the original when possible. */
+export function trackFullArtURL(track) {
+  if (!track) return null
+  if (!track.artwork_path) return track.artwork_url || null
+  if (/\.webp$/i.test(String(track.artwork_path))) return api.fullArtworkURL(track.id)
+  return api.isElectron ? 'file://' + track.artwork_path : api.artworkURL(track.id, true)
 }
 
 /** Where the player gets the audio: the file, or the stream of an online song; null if neither. */
@@ -196,19 +205,33 @@ export async function saveTracksToLibrary(tracks, { isCurrent = () => true, onPr
   isCurrent = downloadBatchCurrent(isCurrent)
   const result = { started: 0, existing: 0, failed: 0 }
   const seen = new Set()
+  // This measures tracks processed for the download queue, NOT bytes
+  // downloaded in the background (tracked by the download manager).
+  const queued = new Set((tracks || []).map(track => sourceRefKey(streamRef(track)) || track?.id).filter(Boolean))
+  const total = queued.size
+  let completed = 0
+  const report = message => onProgress?.(message, total > 1
+    ? { completed, total, percent: Math.floor(completed / total * 100) } : undefined)
   let refresh = false
   for (const track of tracks || []) {
     if (!isCurrent()) break
     const key = sourceRefKey(streamRef(track)) || track?.id
     if (!key || seen.has(key)) continue
     seen.add(key)
-    if (track.file_path && !isGhostTrack(track)) { result.existing++; continue }
-    onProgress?.(`Queuing download of “${track.title}”…`)
+    if (track.file_path && !isGhostTrack(track)) {
+      result.existing++
+      completed++
+      report('Queuing downloads…')
+      continue
+    }
+    report(`Queuing download of “${track.title}”…`)
     const response = await save(track, { isCurrent }).catch(error => ({ error: error.message }))
     if (response?.cancelled) break
     if (response?.alreadyInLibrary) { result.existing++; refresh = true }
     else if (response?.error) result.failed++
     else result.started++
+    completed++
+    report('Queuing downloads…')
   }
   if (refresh && typeof window !== 'undefined') window.dispatchEvent(new Event('lokal:refresh'))
   return result

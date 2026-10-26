@@ -29,6 +29,9 @@ function initDB() {
   ensureStorageDirs()
 
   db = new Database(path.join(_dataDir, 'lokal.db'))
+  // Capture functions are registered after migrations, before ordinary writes.
+  for (const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name GLOB 'link_*'").all()) db.exec('DROP TRIGGER IF EXISTS \"' + name.replace(/\"/g, '\"\"') + '\"')
+  db.function('link_track_key', (artist,title,duration) => require('../link/protocol').trackKey({artist,title,duration}))
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
@@ -233,6 +236,10 @@ function initDB() {
     `ALTER TABLE tracks ADD COLUMN valence REAL`,
     `ALTER TABLE tracks ADD COLUMN tempo REAL`,
     `ALTER TABLE tracks ADD COLUMN time_signature INTEGER`,
+    `ALTER TABLE tracks ADD COLUMN clip_url TEXT`,
+    `ALTER TABLE tracks ADD COLUMN clip_start REAL`,
+    `ALTER TABLE tracks ADD COLUMN clip_end REAL`,
+    `ALTER TABLE tracks ADD COLUMN clip_zoom REAL`,
     // Downloaded songs: where from ('yt', 'sc', an addon 'a-<key>', 'soulseek',
     // 'web') and which online song ("yt:<id>", "a-<key>:<id>"...), so the same
     // song isn't downloaded twice and versions from different places can be
@@ -281,6 +288,10 @@ function initDB() {
     `ALTER TABLE tracks ADD COLUMN valence REAL`,
     `ALTER TABLE tracks ADD COLUMN tempo REAL`,
     `ALTER TABLE tracks ADD COLUMN time_signature INTEGER`,
+    `ALTER TABLE tracks ADD COLUMN clip_url TEXT`,
+    `ALTER TABLE tracks ADD COLUMN clip_start REAL`,
+    `ALTER TABLE tracks ADD COLUMN clip_end REAL`,
+    `ALTER TABLE tracks ADD COLUMN clip_zoom REAL`,
     `ALTER TABLE playlist_tracks ADD COLUMN added_by TEXT DEFAULT 'guest'`,
     `ALTER TABLE playlist_tracks ADD COLUMN added_at INTEGER`,
     
@@ -372,6 +383,29 @@ function initDB() {
       db.exec(m)
     } catch {}
   }
+
+  // Speed up desktop-vs-mobile recording checks for large linked libraries.
+  // The query compares titles case-insensitively before checking artist and
+  // duration, so a matching-title index prevents scanning the whole library.
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_tracks_title_nocase ON tracks(title COLLATE NOCASE)') } catch {}
+
+  // Older phone uploads predate source tracking; repair those identifiable
+  // imports once while keeping explicit addon/download origins intact.
+  try {
+    if (!db.prepare("SELECT 1 FROM settings WHERE key = 'mobile_sources_v1'").get()) {
+      db.transaction(() => {
+        require('../mobileSource').backfillMobileSources(db, getStorageDir())
+        db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('mobile_sources_v1','1')").run()
+      })()
+    }
+  } catch (error) { console.warn('mobile source migration:', error.message) }
+
+  // Upgrade historical phone downloads whose filenames were random UUIDs.
+  // Only files inside data/phone-downloads are touched, and track IDs remain intact.
+  try {
+    const count = require('../phoneCopyFilenames').repairPhoneCopyFilenames(db, getStorageDir())
+    if (count) console.log(`[phone-copy] Repaired ${count} legacy filenames`)
+  } catch (error) { console.warn('phone filename migration:', error.message) }
 
   try {
     db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('lyrics_auto_translate', '0')").run()

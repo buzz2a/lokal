@@ -13,6 +13,7 @@ import { api } from '../api'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
 import { sameStream } from '../onlineTracks'
+import { awaitAtmosOutputRelease, shouldToggleNormalStream } from '../audio/atmosHandoff.mjs'
 import { recentTrackItem, saveRecentItem, saveRecentSearch } from '../searchHistory'
 import SaveToLibraryButton from './SaveToLibraryButton'
 import SoulseekSearch from './SoulseekSearch'
@@ -23,7 +24,12 @@ import AddonCollections from './AddonCollections'
 import AddonSetupNotice from './AddonSetupNotice'
 import { DEFAULT_SEARCH_SOURCES, orderedFindOnSources } from '../findOnSources'
 import { useTranslation } from '../i18n'
+import { atmosAvailable, ATMOS_AVAILABLE } from '../quality'
+import AtmosPlayButton from './AtmosPlayButton'
+import { advertisedQuality } from '../catalogueQuality'
+import { showToast } from './Toaster'
 
+let atmosRequestSerial = 0
 const DEBOUNCE_MS = 450
 const PROVIDER_KEY = 'lokal-online-provider'
 // Built-in sources; installed addons are added from the backend (online:providers).
@@ -119,16 +125,70 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
     return Array.isArray(rows) ? rows : []
   }
 
+  // Atmos is a native output engine, not a second player UI. Place the real
+  // track in the same queue/currentTrack that drives bar, fullscreen, mini,
+  // SMTC and keyboard transports before asking the native backend to play.
+  const playNativeAtmos = async (item, index, mode, device) => {
+    const rows = await asTracks(results)
+    const target = rows[index]
+    if (!target) return { error: 'Could not add the Atmos track to the player' }
+    const queue = rows.filter(Boolean)
+    const indexInQueue = queue.findIndex(row => row.id === target.id)
+    const requestId = ++atmosRequestSerial
+    queue[indexInQueue] = {
+      ...target, atmosNative: true, atmosMode: mode,
+      atmosProvider: item.provider, atmosSourceId: String(item.id),
+      atmosRequestId: requestId,
+    }
+    saveRecentItem(recentTrackItem(target))
+    playQueue(queue, indexInQueue, { type: 'search', id: q, name: `${providerLabel}: ${q}` })
+    const selected = () => {
+      const current = usePlayerStore.getState().currentTrack
+      return current?.atmosNative === true &&
+        current.atmosSourceId === String(item.id) &&
+        current.atmosProvider === item.provider &&
+        current.atmosRequestId === requestId
+    }
+    try {
+      await awaitAtmosOutputRelease()
+      if (!selected()) return { error: 'Atmos request was superseded by a newer track' }
+      const result = await api.atmosPlay(item.provider, String(item.id), device, mode)
+      if (!result?.ok) {
+        // A late native failure must not pause the stereo/other-provider song
+        // that the user has already switched to.
+        if (selected()) usePlayerStore.setState({ isPlaying: false, isBuffering: false })
+        return result || { error: 'Native Atmos output was refused' }
+      }
+      if (!selected()) {
+        // Backend generations and the queued release barrier already cancel
+        // this session. An unconditional stop here could kill a *newer*
+        // Atmos request that has since taken the same player/source.
+        return { error: 'Atmos request was superseded by a newer track' }
+      }
+      return result
+    } catch (error) {
+      if (selected()) usePlayerStore.setState({ isPlaying: false, isBuffering: false })
+      return { error: error?.message || String(error) }
+    }
+  }
+
   const play = async (item, index) => {
-    if (currentTrack && sameStream(currentTrack, item)) { togglePlay(); return }
+    // Normal Play must always request the ordinary provider stream. An Atmos
+    // badge advertises an alternate version; only PLAY ATMOS activates native
+    // E-AC-3 JOC. Matching the same source while Atmos owns it must replace
+    // the audio backend, not toggle the native session's play/pause state.
+    if (shouldToggleNormalStream(currentTrack, sameStream(currentTrack, item))) {
+      togglePlay()
+      return
+    }
     saveRecentSearch(q)
     const rows = await asTracks(results)
     const target = rows[index]
     if (!target) return
-    // Shows up in Recent on the Search page, and plays again from there.
     saveRecentItem(recentTrackItem(target))
     const queue = rows.filter(Boolean)
-    playQueue(queue, queue.findIndex(t => t.id === target.id), { type: 'search', id: q, name: `${providerLabel}: ${q}` })
+    playQueue(queue, queue.findIndex(row => row.id === target.id),
+      { type: 'search', id: q, name: `${providerLabel}: ${q}` })
   }
 
   const addToPlaylist = async (item) => {
@@ -205,11 +265,18 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
                   <p className="text-xs text-muted truncate">
                     {[item.artist, item.album].filter(Boolean).join(' · ')}
                     {item.kind === 'video' && <span className="ml-1.5 text-[10px] uppercase tracking-wide opacity-70">{t('Video')}</span>}
-                    {item.quality && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-accent/80">{item.quality}</span>}
+
                     {item.preview && <span title={t('SoundCloud only lets non-subscribers play 30 seconds of this track')} className="ml-1.5 text-[10px] uppercase tracking-wide text-accent/80">{t('30 s preview')}</span>}
                   </p>
+                  {(advertisedQuality(item) || atmosAvailable(item)) && (
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]" aria-label={t('Catalogue audio formats')}>
+                      {advertisedQuality(item) && <span className="rounded border border-border px-1.5 py-px text-muted" title={t('Catalogue quality (actual playback format can differ)')}>{t(advertisedQuality(item))}</span>}
+                      {atmosAvailable(item) && <span className={`rounded border px-1.5 py-px font-semibold ${ATMOS_AVAILABLE.className}`} title={t('Tidal catalogue offers an Atmos version. Playback depends on the stream and output.')}>{t('DOLBY ATMOS')}</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2.5">
+                  {atmosAvailable(item) && <AtmosPlayButton track={item} onPlay={(mode, device) => playNativeAtmos(item, i, mode, device)} />}
                   <button onClick={() => addToPlaylist(item)} title={t('Add to playlist')} aria-label={t('Add {title} to a playlist', { title: item.title })}
                     className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted hover:text-accent transition-all">
                     <Plus size={15} />

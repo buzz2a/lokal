@@ -73,12 +73,26 @@ async function fetchArtworkAndGenre(db, { title, artist, trackId, duration = nul
   return { artPath, genre: found.genre, source: found.source }
 }
 
-/** The edit dialog's "find artwork": { success, artworkPath, track } or { success: false, error }. */
+/**
+ * The edit dialog's "find artwork": { success, artworkPath, track } or
+ * { success: false, error }. `embedInFile` also puts the cover into the audio file.
+ */
 async function fetchExternalArtwork(db, trackId, { title, artist } = {}, options = {}) {
   const track = db.prepare('SELECT * FROM tracks WHERE id = ?').get(String(trackId || ''))
   if (!track) return { success: false, error: 'Track not found' }
   const found = await fetchArtworkAndGenre(db, { title: title || track.title, artist: artist || track.artist, trackId: track.id, duration: track.duration }, options)
   if (!found?.artPath) return { success: false, error: 'No artwork found' }
+  // Edit Track's cover also goes into the audio file (see fileWrites.js).
+  if (options.embedInFile) {
+    const fileWrites = require('./fileWrites')
+    if (fileWrites.localFile(track)) {
+      try {
+        const cover = await require('../fileArtwork').normalizeArtwork(fs.readFileSync(found.artPath))
+        await fileWrites.embedCover(db, track, cover)
+        fs.writeFileSync(found.artPath, cover)
+      } catch (error) { return { success: false, error: error.message } }
+    }
+  }
   // Asked for by the user: kept like their own choice.
   const applied = store.applyMany(db, [{ trackId: track.id, fields: { artwork_path: found.artPath }, source: found.source }], { lock: true })
   return { success: true, artworkPath: found.artPath, track: applied.tracks[0] || db.prepare('SELECT * FROM tracks WHERE id = ?').get(track.id), batchId: applied.batchId }

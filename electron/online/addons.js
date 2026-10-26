@@ -488,20 +488,24 @@ async function resolveStream(db, key, id, { fetchImpl, force = false } = {}) {
 
 module.exports = {
   addonKey, providerFor, keyOfProvider, checkUrl, getJson, fetchChecked,
-  list: db => [...list(db), ...(optionalPackages(db)?.list() || [])],
-  searchable: db => [...searchable(db), ...(optionalPackages(db)?.list() || []).filter(a => a.enabled && !a.linksOnly && a.resources.includes('search'))],
+  list: db => [...list(db), ...packageList(db)],
+  searchable: db => [...searchable(db), ...packageList(db).filter(a => a.enabled && !a.linksOnly && a.resources.includes('search'))],
   install: (db, url, options) => /\.(sflx|spotiflac-ext)(?:[?#]|$)/i.test(String(url)) ? packageService(db).install({ url }) : install(db, url, options),
   remove: (db, key) => optionalPackages(db)?.find(key) ? packageService(db).remove(key) : remove(db, key),
   setEnabled: (db, key, enabled) => optionalPackages(db)?.find(key) ? packageService(db).setEnabled(key, enabled) : setEnabled(db, key, enabled),
   setSettings: (db, key, values) => optionalPackages(db)?.find(key) ? packageService(db).setSettings(key, values) : setSettings(db, key, values),
   refreshManifests,
   search: (db, key, query, options) => optionalPackages(db)?.find(key) ? packageService(db).search(key, query, options) : search(db, key, query, options),
-  resolveStream: (db, key, id, options) => optionalPackages(db)?.find(key) ? require('../spotiflac/media').resolve(db, key, id, options) : resolveStream(db, key, id, options),
+  resolveStream: (db, key, id, options) => optionalPackages(db)?.find(key) ? require('../mornye/media').resolve(db, key, id, options) : resolveStream(db, key, id, options),
   findByKey: (db, key) => findByKey(db, key) || optionalPackages(db)?.find(key),
   album: (db, key, id, options) => optionalPackages(db)?.find(key) ? packageService(db).album(key, id) : album(db, key, id, options),
   artist: (db, key, id, options) => optionalPackages(db)?.find(key) ? packageService(db).artist(key, id) : artist(db, key, id, options),
   trackOf, packageService,
 }
 
-function packageService(db) { return require('../spotiflac/packages').service(db) }
+function packageService(db) { return require('../mornye/packages').service(db) }
+// A failing package service must not take the HTTP addons down with it.
+function packageList(db) {
+  try { return optionalPackages(db)?.list() || [] } catch (error) { console.warn('[addons] Mornye packages unavailable:', error.message); return [] }
+}
 function optionalPackages(db) { return typeof db?.exec === 'function' ? packageService(db) : null }
