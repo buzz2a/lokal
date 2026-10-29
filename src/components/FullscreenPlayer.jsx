@@ -12,6 +12,7 @@ import MotionCover, { loadMotionCover } from './MotionCover'
 import LikeBurst from './LikeBurst'
 import { useMotionCoverOff } from '../motionCoverPrefs'
 import MixCovers from './MixCovers'
+import FullscreenTurntable from './FullscreenTurntable'
 import MixingMark from './MixingMark'
 import { useMusicVideo, useMusicVideoView } from '../musicVideo'
 import { startCoverFlight } from '../coverFlight'
@@ -287,21 +288,21 @@ export default function FullscreenPlayer() {
   useEffect(() => onWindowVisibility(setWindowHidden), [])
   // Turned off for this song from the side panel.
   const [coverOff, setCoverOff] = useMotionCoverOff(currentTrack)
+  const [settings, setSettings] = useState({})
   // Whether the song has a Canvas / moving cover (asked even while it's
   // turned off, so its button stays to turn it back on).
   const [coverClip, setCoverClip] = useState({ id: null, clip: null })
   useEffect(() => {
     const id = currentTrack?.id
-    if (!id || !(showFullscreen || showLyricsFullscreen)) return undefined
+    if (!id || !(showFullscreen || showLyricsFullscreen) || settings.fullscreen_visual_mode === 'turntable') return undefined
     let current = true
     loadMotionCover(id).then(clip => { if (current) setCoverClip({ id, clip: clip?.src ? clip : null }) })
     return () => { current = false }
-  }, [currentTrack?.id, showFullscreen, showLyricsFullscreen])
+  }, [currentTrack?.id, showFullscreen, showLyricsFullscreen, settings.fullscreen_visual_mode])
   const clipNow = coverClip.id === currentTrack?.id ? coverClip.clip : null
   const { video: musicVideo } = useMusicVideo(currentTrack, showFullscreen || showLyricsFullscreen)
   const showMusicVideo = useMusicVideoView(s => s.show)
   const clipName = clipNow && (clipNow.tall || clipNow.source === 'spotify') ? 'Canvas' : 'Moving Cover'
-  const [settings, setSettings] = useState({})
   const [showSearch, setShowSearch] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   // Which side panel is open, driven purely by the two buttons below -- not
@@ -319,8 +320,27 @@ export default function FullscreenPlayer() {
   const lyricsMode = showLyricsFullscreen
   // Reduced motion: the views just crossfade (the cover doesn't fly).
   const reduceMotion = useReducedMotion()
-  const rotatingCd = settings.fullscreen_rotating_cd === '1' && !performanceMode && !reduceMotion
-  // A playing Canvas or animated album clip always takes priority over spinning artwork.
+  // Old installations used a CD on/off flag; preserve its choice until the
+  // user explicitly selects one of the three fullscreen artwork modes.
+  const fullscreenVisualMode = ['cover', 'cd', 'turntable'].includes(settings.fullscreen_visual_mode)
+    ? settings.fullscreen_visual_mode
+    : (settings.fullscreen_rotating_cd === '1' ? 'cd' : 'cover')
+  const turntableMode = fullscreenVisualMode === 'turntable'
+  // Suspend all moving covers, including a sidebar hidden behind this overlay.
+  // Restore their normal behavior on exit without changing the user's setting.
+  useEffect(() => {
+    const enabled = showFullscreen && turntableMode
+    document.documentElement.toggleAttribute('data-fullscreen-turntable', enabled)
+    window.dispatchEvent(new Event('lokal:fullscreen-turntable'))
+    return () => {
+      if (enabled) {
+        document.documentElement.removeAttribute('data-fullscreen-turntable')
+        window.dispatchEvent(new Event('lokal:fullscreen-turntable'))
+      }
+    }
+  }, [showFullscreen, turntableMode])
+  const rotatingCd = fullscreenVisualMode === 'cd' && !performanceMode && !reduceMotion
+  // In the original CD mode, a playing Canvas/moving cover still takes priority.
   const spinCd = rotatingCd && !fsCanvas && !squareMotionActive
   const animationRunning = showFullscreen && !lyricsMode && isPlaying && !windowHidden
   const playerLayerRef = useRef(null)
@@ -526,7 +546,7 @@ export default function FullscreenPlayer() {
   useLayoutEffect(() => {
     const opened = showFullscreen && !wasShowingRef.current
     wasShowingRef.current = showFullscreen
-    if (!opened || !currentTrack) return undefined
+    if (!opened || !currentTrack || turntableMode) return undefined
     const track = currentTrack
     const showLyrics = () => setFullscreenPanel(panel => (panel === 'none' ? 'lyrics' : panel))
     const cached = peekLyrics(track.id)
@@ -541,7 +561,12 @@ export default function FullscreenPlayer() {
       if (usePlayerStore.getState().currentTrack?.id === track.id) showLyrics()
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [showFullscreen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showFullscreen, turntableMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Switching to the scene never leaves an auto-opened lyrics/queue panel over
+  // the artwork; panels may still be opened deliberately from its controls.
+  useEffect(() => {
+    if (turntableMode) setFullscreenPanel('none')
+  }, [turntableMode])
 
   const canOpenContext = isContextNavigable(playbackContext)
   const openContext = () => {
@@ -777,6 +802,11 @@ export default function FullscreenPlayer() {
             transition={lyricsMode ? FULLSCREEN_OUT : FULLSCREEN_IN}
             style={{ pointerEvents: lyricsMode ? 'none' : undefined }}>
 
+          {turntableMode && <FullscreenTurntable track={currentTrack}
+            playing={animationRunning && !reduceMotion && !performanceMode}
+            progress={progress} duration={duration}
+            onNext={() => next(false)} onPrevious={prev} onPlayPause={togglePlay} />}
+
           {/* The header: close, lyrics view, what's playing from, full screen.
               It fades out (and the cursor hides) after a few seconds without
               the mouse moving, and comes back as soon as it moves. */}
@@ -829,11 +859,11 @@ export default function FullscreenPlayer() {
           {/* The cover, with the controls over it (shown while the pointer is
               on it), then the progress, the title and the artist. Clear of
               the header, so a tall canvas doesn't run into "Playing from". */}
-          <div ref={coverStageRef} className={`relative z-10 flex flex-col items-center justify-center flex-1 min-w-0 px-12 pt-24 pb-12 ${showFullscreen ? 'transition-all duration-500' : ''}`}>
+          <div ref={coverStageRef} className={`relative z-10 flex flex-col items-center ${turntableMode ? 'justify-end' : 'justify-center'} flex-1 min-w-0 px-12 pt-24 pb-12 ${showFullscreen ? 'transition-all duration-500' : ''}`}>
             {/* One card for every song (never swapped, so never waiting on an
                 exit while the window is minimized): the artwork changes inside
                 it (MixCovers: AutoMix's cloudy dissolve, else a short fade). */}
-              <motion.div
+              {!turntableMode && <motion.div
                 ref={coverRef}
                 initial={{ opacity: 0, scale: 0.92, y: 16 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -853,8 +883,8 @@ export default function FullscreenPlayer() {
                   ? <MixCovers track={currentTrack} render={(track, { top }) => (
                       <>
                         <FullscreenStillArtwork track={track} />
-                        {top && <MotionCover trackId={track?.id} only="square" onActive={setSquareMotionActive} off={coverOff} />}
-                        {top && <MotionCover trackId={track?.id} only="tall" onActive={setFsCanvas} off={coverOff} />}
+                        {top && !turntableMode && <MotionCover trackId={track?.id} only="square" onActive={setSquareMotionActive} off={coverOff} />}
+                        {top && !turntableMode && <MotionCover trackId={track?.id} only="tall" onActive={setFsCanvas} off={coverOff} />}
                       </>
                     )} />
                   : <span className="absolute inset-0 flex items-center justify-center text-white/10 text-7xl">♪</span>
@@ -917,9 +947,25 @@ export default function FullscreenPlayer() {
                   </div>
                 )}
                 {burst && burst.trackId === currentTrack?.id && <LikeBurst key={burst.id} kind={burst.kind} />}
-              </motion.div>
+              </motion.div>}
 
-            <div className="relative mt-6 flex items-center gap-3" style={{ width: coverSize }}>
+            {turntableMode && currentTrack && (
+              <div className={`relative z-10 flex items-center justify-center gap-5 rounded-full border border-white/15 bg-black/50 px-7 py-4 shadow-2xl backdrop-blur-md transition-opacity duration-300 ${chromeHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                <CoverIcon onClick={toggleShuffle} label={t("Shuffle")} pressed={shuffle} dim={!shuffle}><Shuffle size={19} className={shuffle ? 'text-accent' : ''}/></CoverIcon>
+                <CoverIcon onClick={prev} label={t("Previous")}><SkipBack size={25} fill="currentColor"/></CoverIcon>
+                <CoverIcon onClick={togglePlay} label={isPlaying ? t("Pause") : t("Play")}>{isPlaying ? <Pause size={31} fill="currentColor" strokeWidth={0}/> : <Play size={31} fill="currentColor" strokeWidth={0}/>}</CoverIcon>
+                <CoverIcon onClick={() => next(false)} label={t("Next")}><SkipForward size={25} fill="currentColor"/></CoverIcon>
+                <CoverIcon onClick={toggleRepeat} label={t("Repeat")} pressed={repeat !== 'none'} dim={repeat === 'none'}><RepeatIcon size={19} className={repeat !== 'none' ? 'text-accent' : ''}/></CoverIcon>
+                <span className="h-6 w-px bg-white/20" aria-hidden="true" />
+                <CoverIcon onClick={() => setFullscreenPanel(p => p === 'queue' ? 'none' : 'queue')} label={t('Queue')} pressed={fullscreenPanel === 'queue'}><ListMusic size={19}/></CoverIcon>
+                <CoverIcon onClick={() => setFullscreenPanel(p => p === 'lyrics' ? 'none' : 'lyrics')} label={t('Lyrics')} pressed={fullscreenPanel === 'lyrics'}><Mic2 size={19}/></CoverIcon>
+                <input aria-label={t('Volume')} title={t('Volume')} type="range" min="0" max="1" step="0.01"
+                  value={volume} onChange={e => setVolume(Number(e.target.value))}
+                  className="w-20 accent-white" />
+              </div>
+            )}
+
+            <div className={`relative mt-6 flex items-center gap-3 ${turntableMode && chromeHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'} transition-opacity duration-300`} style={{ width: turntableMode ? 'min(42rem, calc(100vw - 4rem))' : coverSize }}>
               <MixingMark className="absolute -top-4 left-1/2 -translate-x-1/2 pointer-events-none !text-white/80" />
               <span className="w-11 text-right text-sm tabular-nums text-white/75">{fmt(progress)}</span>
               <div ref={barRef} className="group/bar relative h-3.5 flex-1 cursor-pointer overflow-hidden rounded-full bg-white/20 backdrop-blur-[2px] drop-shadow-[0_1px_4px_rgba(0,0,0,0.25)]"
@@ -931,7 +977,7 @@ export default function FullscreenPlayer() {
 
             {/* In at once, fading: never waiting on the old title's way out (see PlayerBar). */}
             <motion.div key={currentTrack?.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              className="mt-5 text-center" style={{ width: coverSize }}>
+              className={`mt-5 text-center transition-opacity duration-300 ${turntableMode && chromeHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} style={{ width: turntableMode ? 'min(42rem, calc(100vw - 4rem))' : coverSize }}>
               <h2 className="text-3xl font-bold text-white leading-tight truncate">{currentTrack?.title || '—'}</h2>
               <p className="mt-1.5 text-lg text-white/70 truncate">{currentTrack?.artist}</p>
               {currentTrack?.album && <p className="mt-0.5 text-sm text-white/40 truncate">{currentTrack.album}</p>}

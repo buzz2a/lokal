@@ -16,13 +16,15 @@
 const crypto = require('crypto')
 const yt = require('./youtube')
 const sc = require('./soundcloud')
+const mono = require('./monochrome')
 const addons = require('./addons')
 
 const PROVIDERS = {
   yt: { id: 'yt', label: 'YouTube Music', platform: 'youtube', idPattern: /^[\w-]{11}$/, sourceUrl: id => `https://music.youtube.com/watch?v=${id}` },
   sc: { id: 'sc', label: 'SoundCloud', platform: 'soundcloud', idPattern: /^\d{1,20}$/, sourceUrl: id => sc.trackUrl(id) },
+  mono: { id: 'mono', label: 'Monochrome', platform: 'monochrome', idPattern: mono.TRACK_ID, sourceUrl: id => mono.trackUrl(id) },
 }
-const PLATFORM_TO_PROVIDER = { youtube: 'yt', soundcloud: 'sc' }
+const PLATFORM_TO_PROVIDER = { youtube: 'yt', soundcloud: 'sc', monochrome: 'mono' }
 
 /** A built-in provider, or an addon provider ("a-<key>"), or null. */
 function providerOf(id) {
@@ -53,6 +55,7 @@ async function search(provider, query, { db, ytdlp, fetchImpl, fallbackSearch, l
   const key = addons.keyOfProvider(provider)
   if (key) return { results: await addons.search(db, key, query, { fetchImpl, limit: 20 }) }
   if (provider === 'sc') return { results: await sc.searchTracks(query, { ytdlp, limit }) }
+  if (provider === 'mono') return { results: await mono.searchTracks(query, { limit, fetchImpl }) }
   try {
     return { results: (await yt.searchSongs(query, { limit, fetchImpl })).map(fromYouTube) }
   } catch (e) {
@@ -68,6 +71,7 @@ function resolveStream(provider, id, opts = {}) {
   if (!validId(provider, id)) return Promise.reject(new Error('Unknown online song'))
   const key = addons.keyOfProvider(provider)
   if (key) return addons.resolveStream(opts.db, key, id, { force: opts.force, fetchImpl: opts.addonFetch, signal: opts.signal })
+  if (provider === 'mono') return mono.resolveStream(id)
   return provider === 'sc' ? sc.resolveStream(id, opts) : yt.resolveStream(id, opts)
 }
 
@@ -193,7 +197,7 @@ function streamRef(track) {
   if (fromAddon) {
     try { return { provider: addons.providerFor(fromAddon[1]), id: decodeURIComponent(fromAddon[2]) } } catch { return null }
   }
-  const own = path.match(/^ghost:\/\/(youtube|soundcloud)\/online\/([\w-]+)$/)
+  const own = path.match(/^ghost:\/\/(youtube|soundcloud|monochrome)\/online\/([\w-]+)$/)
   if (own) {
     const provider = PLATFORM_TO_PROVIDER[own[1]]
     return validId(provider, own[2]) ? { provider, id: own[2] } : null
@@ -202,7 +206,9 @@ function streamRef(track) {
   const videoId = yt.videoIdFromUrl(track?.source_url)
   if (videoId) return { provider: 'yt', id: videoId }
   const trackId = sc.idFromUrl(track?.source_url)
-  return trackId ? { provider: 'sc', id: trackId } : null
+  if (trackId) return { provider: 'sc', id: trackId }
+  const monoId = mono.idFromUrl(track?.source_url)
+  return monoId ? { provider: 'mono', id: monoId } : null
 }
 
 /**
@@ -213,7 +219,9 @@ function sourceIdentity(url) {
   const videoId = yt.videoIdFromUrl(url)
   if (videoId) return `yt:${videoId}`
   const trackId = sc.idFromUrl(url)
-  return trackId ? `sc:${trackId}` : null
+  if (trackId) return `sc:${trackId}`
+  const monoId = mono.idFromUrl(url)
+  return monoId ? `mono:${monoId}` : null
 }
 
 // ------------------------------------------------------ the same song, streamed
@@ -293,15 +301,18 @@ function sourceRefOfTrack(track) {
  */
 function libraryCopyOf(db, trackId) {
   if (!trackId) return null
+  // On upgrades, the persisted online queue can be read before scanner
+  // initialization. Ensure the edition column exists before filtering it.
+  try { require('../quality').ensureColumns(db) } catch {}
   try {
-    const alias = db.prepare("SELECT t.id FROM track_aliases a JOIN tracks t ON t.id = a.track_id WHERE a.old_id = ? AND t.file_path NOT LIKE 'ghost://%'").get(trackId)
+    const alias = db.prepare("SELECT t.id FROM track_aliases a JOIN tracks t ON t.id = a.track_id WHERE a.old_id = ? AND t.file_path NOT LIKE 'ghost://%' AND COALESCE(t.atmos_verified, 0) != 1").get(trackId)
     if (alias) return alias.id
   } catch {}
   const track = db.prepare('SELECT id, file_path, source_url, title, artist, duration FROM tracks WHERE id = ?').get(trackId)
   if (!track || !String(track.file_path || '').startsWith('ghost://')) return null
   const ref = sourceRefOfTrack(track)
   if (ref) {
-    const hit = db.prepare("SELECT id FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' LIMIT 1").get(ref)
+    const hit = db.prepare("SELECT id FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) != 1 LIMIT 1").get(ref)
     if (hit) return hit.id
   }
   // The same song downloaded from elsewhere. sameSong needs both lengths
@@ -309,7 +320,7 @@ function libraryCopyOf(db, trackId) {
   // those are the candidates, each compared the same way as everywhere else.
   const length = Number(track.duration) || 0
   if (!(length > 0)) return null
-  const candidates = db.prepare("SELECT id, title, artist, duration FROM tracks WHERE file_path NOT LIKE 'ghost://%' AND duration BETWEEN ? AND ?")
+  const candidates = db.prepare("SELECT id, title, artist, duration FROM tracks WHERE file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) != 1 AND duration BETWEEN ? AND ?")
     .all(length - TWIN_DURATION_SLACK_S, length + TWIN_DURATION_SLACK_S)
   return candidates.find(candidate => sameSong(track, candidate))?.id || null
 }
@@ -405,11 +416,15 @@ const positive = value => (Number(value) > 0 && Number(value) < 1000 ? Math.floo
 
 // Add-on album ids are needed to open the provider's album from a streamed
 // track. Older library databases don't have a column for them.
+// Catalogue Atmos availability belongs to the online ghost, not to the
+// verified file-quality flag (atmos_verified). Preserve the capability after
+// a search result becomes the player/playlist's persisted ghost track.
 const sourceAlbumColumnDatabases = new WeakSet()
 function ensureSourceAlbumIdColumn(db) {
   if (sourceAlbumColumnDatabases.has(db)) return
   const columns = db.pragma('table_info(tracks)')
   if (!columns.some(column => column.name === 'source_album_id')) db.exec('ALTER TABLE tracks ADD COLUMN source_album_id TEXT')
+  if (!columns.some(column => column.name === 'atmos_available')) db.exec('ALTER TABLE tracks ADD COLUMN atmos_available INTEGER')
   sourceAlbumColumnDatabases.add(db)
 }
 
@@ -430,9 +445,9 @@ function saveOnlineTracks(db, items = []) {
   // quality...) is kept for the details panel; it fills in, never erases.
   const upsert = db.prepare(`
     INSERT INTO tracks (id, file_path, file_hash, title, artist, album, album_artist, duration, source_url, artwork_url, last_modified,
-      year, track_num, genre, isrc, codec, lossless, bit_depth, sample_rate, bitrate, source_album_id)
+      year, track_num, genre, isrc, codec, lossless, bit_depth, sample_rate, bitrate, source_album_id, atmos_available)
     VALUES (@id, @file_path, @id, @title, @artist, @album, @album_artist, @duration, @source_url, @artwork_url, @now,
-      @year, @track_num, @genre, @isrc, @codec, @lossless, @bit_depth, @sample_rate, @bitrate, @source_album_id)
+      @year, @track_num, @genre, @isrc, @codec, @lossless, @bit_depth, @sample_rate, @bitrate, @source_album_id, @atmos_available)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title, artist = excluded.artist, album = excluded.album,
       album_artist = excluded.album_artist, duration = excluded.duration,
@@ -442,7 +457,8 @@ function saveOnlineTracks(db, items = []) {
       codec = COALESCE(excluded.codec, tracks.codec), lossless = COALESCE(excluded.lossless, tracks.lossless),
       bit_depth = COALESCE(excluded.bit_depth, tracks.bit_depth), sample_rate = COALESCE(excluded.sample_rate, tracks.sample_rate),
       bitrate = COALESCE(excluded.bitrate, tracks.bitrate),
-      source_album_id = COALESCE(excluded.source_album_id, tracks.source_album_id)
+      source_album_id = COALESCE(excluded.source_album_id, tracks.source_album_id),
+      atmos_available = COALESCE(excluded.atmos_available, tracks.atmos_available)
     WHERE tracks.file_path LIKE 'ghost://%'
   `)
   const get = db.prepare('SELECT * FROM tracks WHERE id = ?')
@@ -463,6 +479,9 @@ function saveOnlineTracks(db, items = []) {
       duration: Number(item.duration) > 0 ? Number(item.duration) : null,
       source_url: p.sourceUrl(itemId),
       source_album_id: sourceAlbumIdOf(item),
+      atmos_available: item.atmos_available === true || Number(item.atmos_available) === 1 ||
+        require('../mornye/atmos').hasAtmosMetadata(item) ? 1 :
+        item.atmos_available === false || item.atmos_available === 0 ? 0 : null,
       // Search results call it thumbnail; a row played again (a fallback to
       // another source) has artwork_url: keep its cover either way.
       artwork_url: [item.thumbnail, item.artwork_url].map(value => String(value || '')).find(value => /^https:\/\//.test(value))?.slice(0, 1000) || null,
@@ -487,7 +506,7 @@ function pruneOnlineTracks(db, maxAgeMs = 7 * 24 * 3600 * 1000) {
     const prune = db.transaction((cutoff) => {
       const ids = db.prepare(`
         SELECT id FROM tracks
-        WHERE (file_path LIKE 'ghost://youtube/online/%' OR file_path LIKE 'ghost://soundcloud/online/%' OR file_path LIKE 'ghost://addon/%')
+        WHERE (file_path LIKE 'ghost://youtube/online/%' OR file_path LIKE 'ghost://soundcloud/online/%' OR file_path LIKE 'ghost://monochrome/online/%' OR file_path LIKE 'ghost://addon/%')
           AND COALESCE(last_modified, 0) < ?
           AND id NOT IN (SELECT track_id FROM playlist_tracks)
           AND id NOT IN (SELECT track_id FROM user_likes)

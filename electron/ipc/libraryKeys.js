@@ -13,7 +13,7 @@ function libraryKeys(db = getDB()) {
   try { quality.ensureColumns(db) } catch {}
   let rows = []
   try {
-    rows = db.prepare("SELECT artist, title, source_ref, lossless, bitrate, codec, bit_depth, sample_rate, spectral_verdict FROM tracks WHERE file_path NOT LIKE 'ghost://%'").all()
+    rows = db.prepare("SELECT artist, title, source_ref, lossless, bitrate, codec, bit_depth, sample_rate, spectral_verdict FROM tracks WHERE file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) != 1").all()
   } catch {
     // An older library without these columns.
     try { rows = db.prepare("SELECT artist, title FROM tracks WHERE file_path NOT LIKE 'ghost://%'").all() } catch {}

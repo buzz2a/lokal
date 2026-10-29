@@ -12,6 +12,7 @@ import SourceIcon from './SourceIcon'
 import { DEFAULT_FIND_ON_SOURCES, orderedFindOnSources, buildFindOnRequest } from '../findOnSources'
 import { downloadUrlFor, isGhostTrack, providerLabel as labelOf, saveToLibrary, streamRef, sourceRefKey } from '../onlineTracks'
 import { libraryCopy, useLibraryIndex } from '../libraryIndex'
+import { atmosAvailable } from '../quality'
 
 const SAVING = new Set(['queued', 'downloading', 'finishing'])
 
@@ -28,8 +29,8 @@ const SAVING = new Set(['queued', 'downloading', 'finishing'])
 export default function SaveToLibraryButton({ track, getTrack, source, meta, size = 14, className = '', offerUpgrade = false, replaceTrackId = null, openMenuOnEvent = false, openMenuEventKey = null }) {
   const nav = useNavigate()
   const ref = streamRef(track) || source
-  const url = ref && (ref.provider === 'yt' || ref.provider === 'sc')
-    ? downloadUrlFor({ file_path: `ghost://${ref.provider === 'sc' ? 'soundcloud' : 'youtube'}/online/${ref.id}` })
+  const url = ref && ['yt', 'sc', 'mono'].includes(ref.provider)
+    ? downloadUrlFor({ file_path: `ghost://${ref.provider === 'sc' ? 'soundcloud' : ref.provider === 'mono' ? 'monochrome' : 'youtube'}/online/${ref.id}` })
     : null
   // The download job: by its URL (YouTube, SoundCloud), or by the id we got
   // back when starting it (addon links change on every request).
@@ -128,6 +129,8 @@ export default function SaveToLibraryButton({ track, getTrack, source, meta, siz
   // Only the library check says it's there (not a download of this song):
   // it can still be downloaded from the menu (another version, say).
   const ownedOnly = state === 'saved' && owned && !inLibrary && job?.status !== 'done'
+  const canSaveAtmos = !!ref && /^a-[0-9a-f]{10}$/.test(ref.provider) &&
+    (atmosAvailable(meta) || atmosAvailable(track))
 
   /** Download from where the song streams. */
   const saveFromSource = async ({ force = false } = {}) => {
@@ -150,6 +153,20 @@ export default function SaveToLibraryButton({ track, getTrack, source, meta, siz
     }
     if (result?.error) { setRequested(false); setError(result.error) }
     else if (result?.downloadId) setJobId(result.downloadId)
+    useDownloads.getState().load?.()
+  }
+
+  /** Only this explicit action may set the Atmos tier. An ordinary click
+   * still requests stereo/hi-res even when the addon has Atmos saved.
+   */
+  const saveAtmos = async () => {
+    setMenu(null)
+    const target = await resolveTrack().catch(() => null)
+    if (!target) { setError('Could not prepare the Atmos track'); return }
+    const response = await saveToLibrary(target, { downloadAtmos: true })
+      .catch(error => ({ error: error.message }))
+    if (response?.error) setError(response.error)
+    else if (response?.downloadId) setJobId(response.downloadId)
     useDownloads.getState().load?.()
   }
 
@@ -178,7 +195,6 @@ export default function SaveToLibraryButton({ track, getTrack, source, meta, siz
         ref={externalMenuButtonRef}
         onClick={(e) => { e.stopPropagation(); saveFromSource() }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenuPosition(null); setMenu({ x: e.clientX, y: e.clientY }) }}
-        disabled={state === 'saving' || (state === 'saved' && !ownedOnly)}
         title={label}
         aria-label={label}
         className={`flex-shrink-0 transition-all ${color} ${state === 'idle' ? className : ''}`}
@@ -205,6 +221,12 @@ export default function SaveToLibraryButton({ track, getTrack, source, meta, siz
             className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text hover:bg-card disabled:opacity-50">
             <Download size={14} className="text-muted" /> Download from {providerLabel}
           </button>
+          {canSaveAtmos && (
+            <button role="menuitem" onClick={saveAtmos}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text hover:bg-card disabled:opacity-50">
+              <Download size={14} className="text-white" /> Download Dolby Atmos
+            </button>
+          )}
           <div role="separator" className="my-1 h-px bg-border" />
           {findSources.map(source => (
             <button key={source.id} role="menuitem" onClick={() => findOnSource(source)}

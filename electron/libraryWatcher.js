@@ -122,6 +122,7 @@ function selectedRoot(folder) {
 
 function audioFiles(root) {
   const { AUDIO_EXTS } = require('./ipc/scanner')
+  const { isPreparedStemClipName } = require('./automix/stem-clip')
   const files = []
   const walk = dir => {
     let entries = []
@@ -129,7 +130,8 @@ function audioFiles(root) {
     for (const entry of entries) {
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) walk(full)
-      else if (entry.isFile() && AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(path.resolve(full))
+      else if (entry.isFile() && !isPreparedStemClipName(entry.name) &&
+        AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(path.resolve(full))
     }
   }
   walk(root)

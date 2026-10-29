@@ -51,8 +51,8 @@ async function mediaInfo(file, tools, signal) {
 }
 
 class ExtensionHost {
-  constructor({ addon, storage, network, session, root, grants = [], tools = {}, db, onProgress, onTransfer, signal }) {
-    Object.assign(this, { addon, storage, network, session, root, grants, tools, db, onProgress, onTransfer })
+  constructor({ addon, storage, network, session, root, grants = [], tools = {}, db, onProgress, onTransfer, onByteProgress, signal }) {
+    Object.assign(this, { addon, storage, network, session, root, grants, tools, db, onProgress, onTransfer, onByteProgress })
     this.controller = new AbortController()
     this.signal = signal ? AbortSignal.any([signal, this.controller.signal]) : this.controller.signal
     this.startedAt = Date.now(); this.auth = network.auth ||= {}
@@ -119,6 +119,9 @@ class ExtensionHost {
           let done = 0; while (done < chunk.length) done += (await output.write(chunk, done, chunk.length - done)).bytesWritten
           written += chunk.length
           if (written > 4 * 1024 ** 3) throw new Error('Addon audio exceeds the file size limit')
+          // Actual bytes are the watchdog's activity signal, independent of
+          // segment completion, provider UI percentages or live playback.
+          this.onByteProgress?.(chunk.length)
           live?.({ part, file, total, written })
           reportTransfer()
           await onProgress(written, total)

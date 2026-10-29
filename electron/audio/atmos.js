@@ -374,7 +374,7 @@ function registerAtmosHandlers(ipcMain, { getDB, broadcast }) {
       active = session
       notify({ state: 'loading', provider, id: String(id) })
       const artifact = await service.download(key, id, {
-        quality: 'DOLBY_ATMOS', purpose: 'download', signal: session.controller.signal,
+        quality: 'DOLBY_ATMOS', purpose: 'download', allowAtmos: true, signal: session.controller.signal,
         onProgress: ({ percent, message }) => {
           if (active !== session) return
           const value = Number(percent)

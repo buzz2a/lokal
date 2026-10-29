@@ -51,3 +51,27 @@ test('streamed add-on tracks retain their source album id across metadata refres
     db.close()
   }
 })
+
+test('an addon ghost keeps advertised Atmos after saving, refresh and playback reload', () => {
+  const db = tracksDatabase()
+  try {
+    const item = {
+      provider: 'a-0123456789', id: 'tidal-song-123', title: 'Song',
+      artist: 'Artist', album: 'Album', duration: 220,
+      atmos_available: 1,
+    }
+    const [saved] = sources.saveOnlineTracks(db, [item])
+    assert.equal(saved.atmos_available, 1)
+    assert.equal(saved.file_path, 'ghost://addon/0123456789/tidal-song-123')
+    // The player returns a saved ghost row without the original search badges.
+    const [reloaded] = sources.saveOnlineTracks(db, [{
+      provider: item.provider, id: item.id, title: item.title, artist: item.artist,
+    }])
+    assert.equal(reloaded.atmos_available, 1)
+    assert.equal(db.prepare('SELECT atmos_available FROM tracks WHERE id = ?').get(saved.id).atmos_available, 1)
+    const [stereo] = sources.saveOnlineTracks(db, [{ ...item, id: 'stereo-only', atmos_available: 0 }])
+    assert.equal(stereo.atmos_available, 0)
+  } finally {
+    db.close()
+  }
+})

@@ -7,6 +7,7 @@ import LyricBreakDots from './LyricBreakDots'
 import { api } from '../api'
 import { isWindowHidden, onWindowVisibility } from '../windowVisibility'
 import { useLyricSubline } from '../lyrics/useLyricSubline'
+import { sublineStatusNotice } from '../lyrics/sublineNotice.mjs'
 import { announceLyricsChanged } from '../lyricLine'
 import { isStationTrack, lyricsTrackFor, stationClockUnknown, stationSongTime } from '../radio/stations'
 import { usePlayerStore } from '../store/player'
@@ -575,6 +576,10 @@ export default function LyricsPanel({
         if (refs && line && wordSync) {
           paintVoice(refs.leadEl, line.words, t, false)
           paintVoice(refs.bgEl, line.bgWords, t, false)
+          const sub = subLines?.[i]
+          if (sub?.words?.length && refs.subEl) {
+            paintVoice(refs.subEl.querySelector('[data-voice="timed"]'), sub.words, t, false)
+          }
         }
       }
       for (const i of live) {
@@ -616,6 +621,10 @@ export default function LyricsPanel({
       if (!line || line.gap) return
       paintVoice(refs.leadEl, line.words, t, false)
       paintVoice(refs.bgEl, line.bgWords, t, false)
+      const sub = subLines?.[i]
+      if (sub?.words?.length && refs.subEl) {
+        paintVoice(refs.subEl.querySelector('[data-voice="timed"]'), sub.words, t, false)
+      }
     })
   }, [lines, synced, wordSync, focusIdx, subLines, now])
 
@@ -743,6 +752,11 @@ export default function LyricsPanel({
   const attribution = result?.attribution
   const hasContributors = !!(attribution?.uploader || attribution?.maker)
   const showToolbar = !hideToolbar && lines.length > 0
+  // A failed or unnecessary translation/romanization is not actionable in
+  // the sidebar. Keep notices from explicit actions (source picker / embedding).
+  const visibleNotice = notice || sublineStatusNotice({
+    fullscreen, wantTranslation, translationState, subline, romanizationState,
+  })
 
   return (
     <div className="relative w-full h-full">
@@ -798,7 +812,7 @@ export default function LyricsPanel({
       )}
 
       <AnimatePresence>
-        {(notice || (wantTranslation && translationState === 'same-language') || (wantTranslation && translationState === 'unavailable') || (subline === 'romanization' && romanizationState === 'unavailable')) && (
+        {visibleNotice && (
           <motion.div
             initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.18 }}
@@ -807,7 +821,7 @@ export default function LyricsPanel({
             // sidebar, and framer's own transform overrode the centring.
             className="absolute top-11 right-4 z-30 max-w-[calc(100%-2rem)] w-max px-3 py-1.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/10 text-[11px] leading-snug text-white/85 text-right"
           >
-            {notice || (translationState === 'same-language' ? 'Already in your language' : translationState === 'unavailable' && wantTranslation ? 'Translation unavailable right now' : 'Romanization unavailable right now')}
+            {visibleNotice}
           </motion.div>
         )}
       </AnimatePresence>

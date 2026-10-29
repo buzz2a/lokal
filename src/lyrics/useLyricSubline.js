@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { hasNonLatin } from './timing'
+import { projectSublineUnits } from './sublineTiming.mjs'
 
 const SUBLINE_KEY = 'lokal-lyrics-subline' // 'original' | 'translation' | 'romanization'
 
@@ -127,10 +128,11 @@ export function useLyricSubline({ trackId, result, lines }) {
   }, [subline, lines.length, embeddedRomanization, romanization.state, trackId, nonLatin, compactLines])
 
   const subLines = useMemo(() => {
-    if (wantTranslation) return embeddedTranslation || translation.lines
-    if (subline === 'romanization') return embeddedRomanization || romanization.lines
-    return null
-  }, [wantTranslation, subline, embeddedTranslation, translation.lines, embeddedRomanization, romanization.lines])
+    const supplied = wantTranslation ? (embeddedTranslation || translation.lines)
+      : subline === 'romanization' ? (embeddedRomanization || romanization.lines) : null
+    if (!supplied) return null
+    return supplied.map((sub, index) => projectSublineUnits(lines[index], sub))
+  }, [wantTranslation, subline, embeddedTranslation, translation.lines, embeddedRomanization, romanization.lines, lines])
 
   const toggle = mode => {
     const next = subline === mode ? 'original' : mode

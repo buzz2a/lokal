@@ -1,0 +1,29 @@
+name: Desktop link playlist regression
+
+on:
+  pull_request:
+    paths:
+      - 'electron/link/**'
+      - 'scripts/desktop-link-playlist-reconcile.test.mjs'
+      - 'package.json'
+      - '.github/workflows/desktop-link-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  playlist-reconciliation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check desktop link syntax
+        run: |
+          node --check electron/link/index.js
+          node --check electron/link/reconcile.js
+      - name: Test desktop playlist synchronization
+        run: npm run test:desktop-link-playlists

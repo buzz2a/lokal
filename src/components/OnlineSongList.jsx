@@ -23,6 +23,7 @@ import { api } from '../api'
 import { showToast } from './Toaster'
 import { losslessMenuItem, atmosAvailable, ATMOS_AVAILABLE } from '../quality'
 import AtmosPlayButton from './AtmosPlayButton'
+import { atmosDownloadRef, downloadAtmosVersion } from '../atmosDownloads'
 import { useTranslation } from '../i18n'
 
 /** A song to tell its album or artist by (an addon's own result, when it's from one). */
@@ -85,6 +86,10 @@ export default function OnlineSongList({ tracks, onPlay, numbered = false, showA
       { label: 'Add to queue', icon: ListEnd, onSelect: () => withResolved(track, addToQueueMany) },
       { label: 'Add to playlist…', icon: Plus, onSelect: () => withResolved(track, addToPlaylistMany) },
       !own && { label: 'Download song', icon: Download, onSelect: () => downloadOnline([track]) },
+      atmosDownloadRef(track) && { label: 'Download Dolby Atmos', icon: Download, onSelect: async () => {
+        const response = await downloadAtmosVersion(track).catch(error => ({ error: error.message }))
+        showToast(response?.error || 'Dolby Atmos download queued.')
+      } },
       own && losslessMenuItem(track, Gem),
       { separator: true },
       track.album && { label: 'Go to album', icon: Disc3, onSelect: () => (own ? navigateToTrackAlbum(nav, track) : nav(trackAlbumPath(track), { state: { artwork: track.artwork_url || null, highlightTitle: track.title, anchor: anchorOf(track) } })) },
@@ -126,7 +131,7 @@ export default function OnlineSongList({ tracks, onPlay, numbered = false, showA
             <span className="flex items-center justify-end gap-3">
               {atmosAvailable(track) && <AtmosPlayButton track={{ ...track, ...anchorOf(track) }} />}
               {own && <span title={t('In your library')} className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent"><CheckCircle2 size={11} /> {t('In library')}</span>}
-              {markOwned && !own && <button type="button" onClick={event => { event.stopPropagation(); downloadOnline([track]) }} title={t('Download {title}', { title: track.title })} aria-label={t('Download {title}', { title: track.title })} className="text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100 focus:opacity-100"><Download size={14} /></button>}
+              {markOwned && !own && <button type="button" onContextMenu={event => { event.preventDefault(); event.stopPropagation(); openMenu(event, track) }} onClick={event => { event.stopPropagation(); downloadOnline([track]) }} title={t('Download {title}', { title: track.title })} aria-label={t('Download {title}', { title: track.title })} className="text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100 focus:opacity-100"><Download size={14} /></button>}
               {showMeta && (track.bpm || track.camelot || track.key) && <span title={track.key || undefined} className="hidden text-xs tabular-nums text-muted @md:inline">{[track.bpm && `${track.bpm} BPM`, track.camelot || track.key].filter(Boolean).join(' · ')}</span>}
               <span className="text-xs tabular-nums text-subtle">{time(track.duration)}</span>
             </span>

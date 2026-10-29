@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { artistIdFromName } from '../src/artistId.js'
+import { createGlobalArtistOpener, globalArtistDestination, selectedGlobalArtist } from '../src/globalArtistNavigation.mjs'
 
 const require = createRequire(import.meta.url)
 const { globalSearch, preferredGlobalSearch, normalise } = require('../electron/online/globalCatalogue.js')
@@ -97,4 +100,68 @@ test('Apple setting never touches the Spotify session', async () => {
   })
   assert.equal(result.catalogue, 'apple')
   assert.equal(result.fallback, undefined)
+})
+
+
+test('Global artist cards and Open artist context menu invoke the same real navigation action', () => {
+  const component = readFileSync(new URL('../src/components/GlobalCatalogueResults.jsx', import.meta.url), 'utf8')
+  // The rendered artist card and context-menu action call this same handler.
+  assert.match(component, /const openArtist = createGlobalArtistOpener\(nav, onLocalArtistClick\)/)
+  assert.match(component, /onClick=\{\(\) => openArtist\(origin, row\)\}/)
+  assert.match(component, /onSelect: \(\) => openArtist\(origin, artist\)/)
+  const calls = []
+  const selected = { id: 'spt-first-artist', catalogue: 'spotify', title: 'Björk' }
+  const clickArtistCard = createGlobalArtistOpener((route, options) => calls.push({ route, options }))
+  const clickOpenArtistMenu = clickArtistCard
+  clickArtistCard('online', selected)
+  clickOpenArtistMenu('online', selected)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[0], calls[1])
+  assert.equal(calls[0].route.pathname, '/artist/a-björk')
+  assert.match(calls[0].route.search, /catalogueArtistId=spt-first-artist/)
+  assert.deepEqual(calls[0].options.state, {
+    name: 'Björk',
+    catalogueArtist: { catalogue: 'spotify', artistId: 'spt-first-artist', name: 'Björk' },
+  })
+  // Local results still go through the existing library click handler.
+  const localClicks = []
+  const open = createGlobalArtistOpener(
+    () => { throw Error('Local artists must not route through catalogue navigation') },
+    artist => localClicks.push(artist),
+  )
+  open('library', { id: 'a-björk', name: 'Björk' })
+  assert.deepEqual(localClicks, [{ id: 'a-björk', name: 'Björk' }])
+  assert.doesNotMatch(component, /setQuery\(artist\.(?:title|name)/)
+})
+
+test('selected Spotify/Apple artist IDs survive same-name and same-slug collisions', () => {
+  const left = globalArtistDestination({ catalogue: 'spotify', catalogue_id: 'spotify-111', name: 'Same Artist' })
+  const right = globalArtistDestination({ catalogue: 'spotify', catalogue_id: 'spotify-222', name: 'Same Artist' })
+  const apple = globalArtistDestination({ catalogue: 'apple', id: 2381, title: 'Same Artist' })
+  assert.equal(left.pathname, right.pathname)
+  assert.notEqual(left.search, right.search)
+  assert.notEqual(left.search, apple.search)
+  for (const target of [left, right, apple]) {
+    const selected = selectedGlobalArtist({ pathname: target.pathname, search: target.search, state: target.state }, 'a-same-artist')
+    assert.deepEqual(selected, target.state.catalogueArtist)
+    // A hard refresh may drop MemoryRouter state: identity remains in the URL.
+    assert.deepEqual(selectedGlobalArtist({ pathname: target.pathname, search: target.search }, 'a-same-artist'), selected)
+  }
+  assert.equal(selectedGlobalArtist({ search: left.search }, 'a-different-name'), null)
+  assert.equal(selectedGlobalArtist({ state: left.state }, 'a-same-artist'), null)
+  assert.equal(selectedGlobalArtist({ search: '?catalogue=unknown&catalogueArtistId=1&name=Same+Artist' }, 'a-same-artist'), null)
+  assert.equal(artistIdFromName('東京事変'), 'a-東京事変')
+  assert.equal(artistIdFromName('Earth, Wind & Fire'), 'a-earth-wind-fire')
+})
+
+test('artist page prefers explicit catalogue identity over same-slug local records', () => {
+  const page = readFileSync(new URL('../src/pages/Artist.jsx', import.meta.url), 'utf8')
+  const online = readFileSync(new URL('../src/components/OnlineArtist.jsx', import.meta.url), 'utf8')
+  assert.match(page, /const catalogueArtist = selectedGlobalArtist\(location, id\)/)
+  assert.match(page, /if \(catalogueArtist\) \{\s*setArtist\(null\)\s*setOnline\(true\)\s*return/)
+  assert.match(page, /if \(online \|\| catalogueArtist\) return <OnlineArtist/)
+  assert.match(online, /if \(catalogueIdentity\) \{ setLibraryTracks\(\[\]\); return \}/)
+  assert.match(online, /artistCacheKey\(fallbackName, anchor\)/)
+  assert.match(online, /String\(anchor\?\.provider \|\| ''\)\.startsWith\('catalogue:'\)/)
+  assert.match(online, /loadArtistChannel\(fallbackName, \{ anchor: lookupAnchor, hints \}\)/)
 })

@@ -146,6 +146,54 @@ test('a package download crosses the real host, FFprobe validation, and staged c
   try { assert.equal(result.info.codec,'pcm_s16le');assert.equal(path.extname(result.file),'.wav','WAV audio written to audio.flac is rewrapped for the player');assert.equal(result.info.duration_ms,1000);assert.equal(result.metadata.album,'Fixture Album');assert.equal(result.metadata.album_name,'Fixture Album');assert.equal(result.metadata.album_artist,'Fixture Album Artist');assert.ok((await fs.stat(result.file)).size>44) } finally { await result.cleanup() }
 })
 
+test('native Tidal acquisition checks availability before enrichment for both Play and Save',async t=>{
+  const {service}=await fixture(t)
+  const wav=Buffer.alloc(44+8000*2)
+  wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4)
+  wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16)
+  wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22)
+  wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28)
+  wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34)
+  wav.write('data',36);wav.writeUInt32LE(wav.length-44,40)
+  const server=http.createServer((_req,res)=>{
+    res.setHeader('Content-Length',String(wav.length));res.end(wav)
+  })
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+  t.after(()=>new Promise(resolve=>server.close(resolve)))
+  service.toolProvider=()=>({ffmpeg:'ffmpeg',ffprobe:'ffprobe'})
+  const port=server.address().port
+  const code=`var order=[];
+    registerExtension({
+      initialize(){},
+      enrichTrack(track){order.push('enrichment');return {...track,enriched:true};},
+      checkAvailability(isrc,name,artists,options){
+        order.push('availability');
+        return options.track.enriched
+          ? {available:true,track_id:'12345'}
+          : {available:false,reason:'Needs fresh metadata'};
+      },
+      download(id,quality,output,progress){
+        if(order.join(',')!=='availability,enrichment,availability')
+          return {success:false,error:'Acquisition steps were not sequenced correctly'};
+        var r=file.download('http://127.0.0.1:${port}/audio',output,{
+          onProgress:function(w,t){progress(t?100*w/t:0);}
+        });
+        return {success:r.success,file_path:r.path};
+      }
+    })`
+  const installed=await service.install({buffer:archive({
+    ...manifest,name:'tidal',permissions:{...manifest.permissions,network:['127.0.0.1'],allowHttp:true},
+  },code)})
+  service.remember(installed.key,[{
+    id:'12345',name:'Song',artists:'Artist',duration_ms:1000,provider_id:'tidal',
+  }])
+  for(const purpose of ['playback','download']){
+    const result=await service.download(installed.key,'12345',{purpose})
+    try{assert.ok((await fs.stat(result.file)).size>44);assert.equal(result.info.codec,'pcm_s16le')}
+    finally{await result.cleanup()}
+  }
+})
+
 test('an addon login (tokens and verification cookies) survives a restart, and Disconnect forgets it',async t=>{
   const {service,db,root}=await fixture(t),installed=await service.install({buffer:archive({...manifest,signedSession:undefined,globalActions:[{action:'login',label:'Log in'}]})})
   assert.equal(service.list()[0].access.kind,'login');assert.equal(service.list()[0].access.ready,false)

@@ -21,6 +21,7 @@ import AudioPipelineModal from './AudioPipelineModal'
 import { trackArtURL, isStreamed, streamLabel } from '../onlineTracks'
 import SaveToLibraryButton from './SaveToLibraryButton'
 import { TIERS, formatLabel, isSuspect, tierOf, losslessMenuItem } from '../quality'
+import { atmosDownloadRef, downloadAtmosVersion } from '../atmosDownloads'
 import AudioOutputPicker from './AudioOutputPicker'
 import MixingMark from './MixingMark'
 import ContextMenu, { useContextMenu } from './ContextMenu'
@@ -277,6 +278,10 @@ export default function PlayerBar() {
       !targetIsStation && targetHasAlbum && { label: 'Go to album', icon: Disc3, onSelect: () => navigateToTrackAlbum(nav, target) },
       targetStreamed && !targetIsStation && { label: 'Save to library / Find another source…', icon: Download, onSelect: () => window.dispatchEvent(new CustomEvent('lokal:open-save-source-menu', { detail: { key: target.id } })) },
       targetIsStationSong && { label: 'Save to library / Find another source…', icon: Download, onSelect: () => window.dispatchEvent(new CustomEvent('lokal:open-save-source-menu', { detail: { key: target.song_key } })) },
+      atmosDownloadRef(target) && { label: 'Download Dolby Atmos', icon: Download, onSelect: async () => {
+        const response = await downloadAtmosVersion(target).catch(error => ({ error: error.message }))
+        showToast(response?.error || 'Dolby Atmos download queued.')
+      } },
       !targetIsStation && losslessMenuItem(target, Gem),
       targetLocal && { label: 'Edit info', icon: Edit2, onSelect: () => setEditingTrack(target) },
       targetLocal && api.isElectron && { label: 'Replace artwork', icon: Camera, onSelect: () => replaceArtwork(target) },

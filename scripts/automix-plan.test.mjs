@@ -57,3 +57,82 @@ test('an imported tempo wins when the analysis agrees with it (octave or triplet
   assert.equal(tempoOf({ tempo: 120 }, { bpm: 97, beatConfidence: 0.5 }).bpm, 97)
   assert.equal(tempoOf({}, { bpm: 128, beatConfidence: 0.5 }).bpm, 128)
 })
+
+
+test('short audible tails never produce an overlong AutoMix overlap', () => {
+  const outgoing = analysis({ duration: 30, audibleEnd: 23, fadeOutStart: 22, bpm: 124 })
+  const incoming = analysis({ bpm: 124 })
+  const plan = planTransition({ out: outgoing, outTrack: {}, outDuration: 30, next: incoming, nextTrack: {} })
+  assert.ok(plan)
+  assert.equal(plan.kind, 'smart', 'incomplete beat sequences fall back to a safe mix')
+  assert.equal(plan.rate, 1)
+  assert.ok(plan.start + plan.length <= 23.001)
+  assert.ok(plan.fadeIn <= plan.length)
+  if (plan.bassSwap) assert.ok(plan.swapAt < plan.length - 0.1)
+  const noRoom = planTransition({
+    out: analysis({ duration: 30, audibleEnd: 20.2 }),
+    outTrack: {}, outDuration: 30, next: incoming, nextTrack: {},
+  })
+  assert.equal(noRoom, null)
+})
+
+
+test('strong outgoing and incoming cues allow a validated 32-beat handoff', () => {
+  const outgoing = analysis({
+    transitionCues: { exits: [{ time: 182, confidence: 0.9 }] },
+    audibleEnd: 198,
+  })
+  const incoming = analysis({
+    bpm: 120, leadIn: 0.5, firstBeat: 0.3,
+    transitionCues: { entrances: [{ time: 3.3, confidence: 0.9 }] },
+  })
+  const plan = planTransition({
+    out: outgoing, outTrack: {}, outDuration: 200,
+    next: incoming, nextTrack: {},
+  })
+  assert.equal(plan.kind, 'beatmatch')
+  assert.ok(Math.abs(plan.length - (32 * 60 / 124)) < 0.01)
+  assert.ok(plan.start + plan.length <= outgoing.audibleEnd + 0.001)
+  assert.ok(plan.inOffset >= 3.3)
+  assert.ok(plan.swapAt > 7)
+  const withoutCues = planTransition({
+    out: { ...outgoing, transitionCues: { exits: [] } }, outTrack: {},
+    outDuration: 200, next: incoming, nextTrack: {},
+  })
+  assert.ok(withoutCues.length < 14, 'uncertain cues keep a short fade')
+})
+
+test('structural cue selection rejects malformed and low-confidence candidates', async () => {
+  const { cueNear } = await import('../src/audio/automix.js')
+  assert.equal(cueNear([{ time: 8, confidence: 0.2 }], 8, 2), null)
+  assert.equal(cueNear([{ time: Infinity, confidence: 0.9 }], 8, 2), null)
+  assert.equal(cueNear([null, { time: 8, confidence: 0.9 }], 8, 2)?.time, 8)
+  assert.equal(cueNear([{ time: 8, confidence: 0.9 }], 8, 2)?.time, 8)
+  assert.equal(cueNear([{ time: 80, confidence: 0.9 }], 8, 2), null)
+})
+
+test('offline CUE-DETR start points control a complete 32-beat overlap', () => {
+  const out = analysis({
+    duration: 200, audibleEnd: 198, bpm: 124,
+    firstBeat: .2, beatConfidence: .8, energy: .7,
+    transitionCues: { exits: [{time:166,confidence:.95,source:'cue-detr'}] },
+  })
+  const next = analysis({
+    duration: 200, bpm:120, firstBeat:.3,
+    beatConfidence:.8, energy:.7,
+    transitionCues:{entrances:[{time:8,confidence:.95,source:'cue-detr'}]},
+  })
+  const p = planTransition({
+    out, next, outTrack:{}, nextTrack:{}, outDuration:200,
+  })
+  assert.equal(p.kind,'beatmatch')
+  assert.ok(p.start>=165.5 && p.start<=166.5)
+  assert.ok(p.inOffset>=7.5 && p.inOffset<=8.5)
+  assert.ok(p.start+p.length<=198)
+  assert.ok(p.length>15 && p.length<17)
+  const fallback=planTransition({
+    out, next:{...next,transitionCues:{entrances:[]}},
+    outTrack:{}, nextTrack:{},outDuration:200,
+  })
+  assert.ok(fallback.start>p.start, 'unpaired model cue must not skip the outro')
+})

@@ -1,6 +1,6 @@
 // Online results: songs that aren't in the library, under the local results
-// on the Search page, from YouTube Music, SoundCloud, installed addons or
-// Soulseek (switch in the section header, remembered). The streaming sources
+// on the Search page, from YouTube Music, SoundCloud, Monochrome, installed addons or
+// Soulseek (switch in the source selector, remembered). The streaming sources
 // play with the user's yt-dlp; + adds one to a playlist and ⬇ saves it to the
 // library (right-click ⬇ for Soulseek), both keeping it as a ghost track
 // until the file is in. YouTube Music also lists matching playlists and
@@ -8,14 +8,17 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Music, Pause, Play, Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Music, Pause, Play, Plus, Download, ListEnd, Clock, Heart, Disc3, User, Radio } from 'lucide-react'
 import { api } from '../api'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
-import { sameStream } from '../onlineTracks'
+import { sameStream, saveToLibrary } from '../onlineTracks'
 import { awaitAtmosOutputRelease, shouldToggleNormalStream } from '../audio/atmosHandoff.mjs'
 import { recentTrackItem, saveRecentItem, saveRecentSearch } from '../searchHistory'
 import SaveToLibraryButton from './SaveToLibraryButton'
+import ContextMenu, { useContextMenu } from './ContextMenu'
+import { atmosDownloadRef, downloadAtmosVersion } from '../atmosDownloads'
 import SoulseekSearch from './SoulseekSearch'
 import DownloadNotices from './DownloadNotices'
 import SourceIcon from './SourceIcon'
@@ -25,6 +28,10 @@ import { useTranslation } from '../i18n'
 import { atmosAvailable, ATMOS_AVAILABLE } from '../quality'
 import AtmosPlayButton from './AtmosPlayButton'
 import { advertisedQuality } from '../catalogueQuality'
+import { playNextMany, addToQueueMany } from '../trackActions'
+import { trackAlbumPath } from '../onlineBrowse'
+import { artistPath } from '../releaseActions'
+import { openRadio } from '../radioActions'
 import { showToast } from './Toaster'
 
 let atmosRequestSerial = 0
@@ -69,8 +76,10 @@ function useProviders() {
  *                     in lossless"): Soulseek is shown, and the file picked
  *                     there replaces the stream / the track's file
  */
-export default function OnlineResults({ query, soulseekFor = null, findOn = null, showLibraryHint = true }) {
+export default function OnlineResults({ query, soulseekFor = null, findOn = null }) {
   const { t } = useTranslation()
+  const rightClickMenu = useContextMenu()
+  const nav = useNavigate()
   // YouTube Music and SoundCloud, then Soulseek, then installed addons.
   const loaded = useProviders()
   const providers = orderedFindOnSources(loaded)
@@ -189,6 +198,54 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
       { type: 'search', id: q, name: `${providerLabel}: ${q}` })
   }
 
+  // Search results are provider IDs, not Lokal track IDs. Save just the
+  // selected source as a ghost when an action needs a queue/playlist/like ID;
+  // opening a menu alone must never create library entries.
+  const withTrack = async (item, action) => {
+    try {
+      const [row] = await asTracks([item])
+      if (!row?.id) { showToast('Could not prepare this online song.'); return }
+      await action(row)
+    } catch (error) {
+      showToast(error?.message || 'Could not perform this action.')
+    }
+  }
+  const toggleResultLike = item => withTrack(item, async row => {
+    const userId = useAppStore.getState().user?.id
+    const result = await api.toggleLike(row.id, userId, row)
+    if (result?.error) { showToast(result.error); return }
+    if (userId !== useAppStore.getState().user?.id) return
+    const liked = typeof result === 'boolean' ? result : result?.liked ?? false
+    usePlayerStore.getState().setLiked(row.id, liked)
+    showToast(liked ? 'Added to Liked Songs' : 'Removed from Liked Songs')
+  })
+  const openResultMenu = (event, item, index) => {
+    // We can show the precise like state only when this result is the current
+    // stream; other results have no Lokal ID until the user selects an action.
+    const known = sameStream(currentTrack, item)
+    const liked = known && usePlayerStore.getState().likedIds.has(currentTrack.id)
+    const anchor = {
+      title: item.title, album: item.album || '', provider: item.provider || provider,
+      id: item.id, artistId: item.artistIds?.[0] || item.artistId || null,
+    }
+    rightClickMenu.open(event, [
+      { label: 'Play', icon: Play, onSelect: () => play(item, index) },
+      { label: 'Play next', icon: Clock, onSelect: () => withTrack(item, row => playNextMany([row])) },
+      { label: 'Add to queue', icon: ListEnd, onSelect: () => withTrack(item, row => addToQueueMany([row])) },
+      { label: 'Add to playlist…', icon: Plus, onSelect: () => addToPlaylist(item) },
+      { label: known ? (liked ? 'Remove from Liked Songs' : 'Like') : 'Like / Unlike', icon: Heart, onSelect: () => toggleResultLike(item) },
+      { label: 'Download song', icon: Download, onSelect: () => withTrack(item, saveToLibrary) },
+      atmosDownloadRef(item) && { label: 'Download Dolby Atmos', icon: Download, onSelect: async () => {
+        const response = await downloadAtmosVersion(item).catch(error => ({ error: error.message }))
+        showToast(response?.error || 'Dolby Atmos download queued.')
+      } },
+      { separator: true },
+      (item.album || item.albumId || item.source_album_id) && { label: 'Go to album', icon: Disc3, onSelect: () => nav(trackAlbumPath({ ...item, provider: anchor.provider }), { state: { artwork: item.thumbnail || item.artwork_url || null, highlightTitle: item.title, anchor } }) },
+      item.artist && { label: 'Go to artist', icon: User, onSelect: () => nav(artistPath(item.artist), { state: { name: item.artist, anchor } }) },
+      { label: 'Start radio', icon: Radio, onSelect: () => openRadio(nav, item, useAppStore.getState().user?.id) },
+    ])
+  }
+
   const addToPlaylist = async (item) => {
     const [row] = await asTracks([item])
     if (row?.id) openAddToPlaylist(row)
@@ -198,10 +255,6 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
     <section>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 mb-3">
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
-          <h2 className="text-xs font-display text-muted uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
-            Online
-            {loading && !soulseek && <span className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />}
-          </h2>
           <div role="tablist" aria-label={t('Online source')} className="flex max-w-full flex-wrap items-center gap-1 rounded-2xl border border-border p-0.5">
             {providers.map(p => (
               <button
@@ -218,8 +271,8 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
               </button>
             ))}
           </div>
+          {loading && !soulseek && <span role="status" aria-label={t('Searching…')} className="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />}
         </div>
-        <span className="min-w-0 text-[10px] text-muted/80 truncate">{t(soulseek ? 'Files people share, through slskd' : providers.find(p => p.id === provider)?.addon ? 'From an add-on you installed' : 'Streams with yt-dlp')}{showLibraryHint ? t(' · not in your library') : ''}</span>
       </div>
       <div className="mb-3 empty:hidden"><DownloadNotices youtube={provider === 'yt'} /></div>
       {!soulseek && <AddonSetupNotice source={providers.find(p => p.id === provider)} className="mb-3" />}
@@ -245,6 +298,7 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: Math.min(i, 10) * 0.02 }}
                 onDoubleClick={() => play(item, i)}
+                onContextMenu={event => openResultMenu(event, item, i)}
                 className={`group grid grid-cols-[2.5rem_1fr_auto] items-center gap-3 px-3 py-1.5 rounded-lg transition-colors ${current ? 'bg-accent/10' : 'hover:bg-elevated'}`}
               >
                 <button
@@ -281,7 +335,7 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
                   </button>
                   <SaveToLibraryButton
                     source={{ provider: item.provider, id: String(item.id) }}
-                    meta={{ title: item.title, artist: item.artist, artists: item.artists }}
+                    meta={item}
                     replaceTrackId={sourceRequest?.replaceTrackId}
                     getTrack={async () => (await asTracks([item]))[0]}
                     size={15}
@@ -296,6 +350,7 @@ export default function OnlineResults({ query, soulseekFor = null, findOn = null
         </div>
         </>
       )}
+      <ContextMenu menu={rightClickMenu} />
     </section>
   )
 }

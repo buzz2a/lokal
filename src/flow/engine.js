@@ -137,6 +137,31 @@ export function topGenres(tracks, limit = 8) {
 }
 
 const artistKey = track => String(track?.artist || '').split(/,|&| feat\.? | ft\.? /i)[0].trim().toLowerCase()
+/**
+ * Soft tempo/energy continuity for Flow: prefer easier AutoMix handoffs,
+ * without refusing discoveries. Half-time / double-time BPMs are equivalent.
+ * Missing or implausible features contribute no penalty.
+ */
+export function transitionAffinity(previous, candidate) {
+  if (!previous || !candidate) return 1
+  let affinity = 1
+  const first = num(previous.tempo)
+  const second = num(candidate.tempo)
+  if (first !== null && second !== null &&
+      first >= 50 && first <= 220 && second >= 50 && second <= 220) {
+    const distance = Math.min(...[0.5, 1, 2].map(factor =>
+      Math.abs(Math.log2(second * factor / first))))
+    affinity *= 1 - 0.35 * clamp01(distance / Math.log2(1.35))
+  }
+  const energyA = num(previous.energy)
+  const energyB = num(candidate.energy)
+  if (energyA !== null && energyB !== null &&
+      energyA >= 0 && energyA <= 1 && energyB >= 0 && energyB <= 1) {
+    affinity *= 1 - 0.25 * clamp01(Math.max(0, Math.abs(energyA - energyB) - 0.15) / 0.5)
+  }
+  return affinity
+}
+
 export const flowSongKey = track => `${String(track?.artist || '').trim().toLowerCase()}\0${String(track?.title || '').trim().toLowerCase()}`
 
 function weightedPick(items, weightOf, random) {
@@ -192,12 +217,14 @@ export function pickFlow(pool, { count = 8, mood = 'flow', tuner = DEFAULT_TUNER
     let from = wantFresh || !favourites.length ? freshPool : favourites
     if (from === freshPool) freshCredit -= 1
     const spaced = item => !artists.includes(artistKey(item.track))
-    let index = weightedPick(from, item => (spaced(item) ? item.weight : 0), random)
+    const previous = picked.at(-1) || lastTracks.at(-1)
+    const smoothWeight = item => item.weight * transitionAffinity(previous, item.track)
+    let index = weightedPick(from, item => (spaced(item) ? smoothWeight(item) : 0), random)
     if (index < 0) {
       // Every song left here is by an artist just heard: the other kind, else anyone.
       const other = from === freshPool ? favourites : freshPool
-      const elsewhere = weightedPick(other, item => (spaced(item) ? item.weight : 0), random)
-      if (elsewhere >= 0) { from = other; index = elsewhere } else index = weightedPick(from, item => item.weight, random)
+      const elsewhere = weightedPick(other, item => (spaced(item) ? smoothWeight(item) : 0), random)
+      if (elsewhere >= 0) { from = other; index = elsewhere } else index = weightedPick(from, smoothWeight, random)
     }
     if (index < 0) break
     const [item] = from.splice(index, 1)

@@ -1,0 +1,39 @@
+name: Fullscreen wallpaper integration
+on:
+  pull_request:
+    paths:
+      - 'electron/ipc/workshopWallpaper.js'
+      - 'electron/main.js'
+      - 'electron/preload.js'
+      - 'src/components/FullscreenTurntable.jsx'
+      - 'src/components/FullscreenPlayer.jsx'
+      - 'src/components/MotionCover.jsx'
+      - 'src/pages/Settings.jsx'
+      - 'src/index.css'
+      - 'scripts/fullscreen-appearance.test.mjs'
+      - 'scripts/workshop-wallpaper.test.cjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/fullscreen-scene-ci.yml'
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install application dependencies without native postinstall
+        run: npm ci --ignore-scripts
+      - name: Check Electron integration syntax
+        run: |
+          node --check electron/ipc/workshopWallpaper.js
+          node --check electron/main.js
+          node --check electron/preload.js
+      - name: Test fullscreen regression suite
+        run: |
+          npm run test:fullscreen-appearance
+          node --test scripts/workshop-wallpaper.test.cjs
+      - name: Compile Vite renderer
+        run: |
+          npm run gen:icons
+          npx vite build

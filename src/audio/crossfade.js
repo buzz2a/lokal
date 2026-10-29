@@ -37,6 +37,10 @@ export function readCrossfadeSettings(settings = {}) {
     mode,
     automix: mode === 'automix',
     automixSameAlbum: settings?.automix_same_album === '1',
+    // Experimental, explicit opt-in: only verified offline Demucs pairs.
+    stemClips: mode === 'automix' && settings?.automix_stem_clips === '1',
+    autoPrepare: mode === 'automix' && settings?.automix_auto_prepare === '1',
+    engineDir: typeof settings?.automix_engine_path === 'string' ? settings.automix_engine_path.trim() : '',
     // Crossfading only in its own mode (a length left set from before doesn't count otherwise).
     beforeEnd: mode === 'crossfade' ? (length > CROSSFADE_MIN_S ? length : DEFAULT_CROSSFADE_S) : 0,
     fadeIn: seconds(settings?.crossfade_fade_in, CROSSFADE_DEFAULTS.fadeIn, 30),

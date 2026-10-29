@@ -71,6 +71,12 @@ async function upgradeTrackFile(db, trackId, newPath, { storageDir, allowDuratio
     try { moveFile(track.file_path, movedTo) } catch (e) { return { error: `Could not move the old file aside (${e.message}).` } }
   }
 
+  // The replacement is a new physical file. Re-probe its actual audio profile:
+  // a missing verified Atmos edition must not lose JOC classification during
+  // repair, nor should an ordinary E-AC-3 replacement inherit an old Atmos flag.
+  const audioQuality = quality.qualityFields(meta)
+  audioQuality.atmos_verified = await quality.probeAtmosFile(newPath, { codec: audioQuality.codec })
+
   // The new file may already have been indexed as a track of its own (e.g.
   // by a rescan): that row goes, this one takes its file.
   const stat = fs.statSync(newPath)
@@ -86,7 +92,7 @@ async function upgradeTrackFile(db, trackId, newPath, { storageDir, allowDuratio
     }
     db.prepare('UPDATE tracks SET file_path = ?, bitrate = ?, duration = COALESCE(?, duration), last_modified = ? WHERE id = ?')
       .run(newPath, meta?.format?.bitrate ? Math.round(meta.format.bitrate / 1000) : null, duration || null, stat.mtimeMs, track.id)
-    quality.saveFields(db, track.id, quality.qualityFields(meta), { fileChanged: true })
+    quality.saveFields(db, track.id, audioQuality, { fileChanged: true })
   })
   try {
     swap()

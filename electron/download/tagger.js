@@ -102,6 +102,29 @@ async function squareCover(T, file) {
   return true
 }
 
+/** Replace only demonstrably small artwork on newly downloaded addon tracks.
+ * Regular library files and manually edited artwork never request this policy.
+ * A missing/broken original does not count as a user-chosen high-res cover.
+ */
+async function shouldUpgradeEmbeddedCover(existingBytes, sourceBytes) {
+  const s = sharp()
+  if (!s || !sourceBytes?.length) return false
+  try {
+    const candidate = await s(Buffer.from(sourceBytes), { limitInputPixels: 16 * 1024 * 1024 }).metadata()
+    const candidateSide = Math.min(candidate.width || 0, candidate.height || 0)
+    if (!candidateSide) return false
+    if (!existingBytes?.length) return true
+    let currentSide = 0
+    try {
+      const current = await s(Buffer.from(existingBytes), { limitInputPixels: 16 * 1024 * 1024 }).metadata()
+      currentSide = Math.min(current.width || 0, current.height || 0)
+    } catch { /* damaged embedded picture */ }
+    // Do not overwrite a good 640px+ cover or exchange similarly sized art.
+    // This is *not* a metadata/album similarity guess.
+    return currentSide < 640 && candidateSide >= Math.max(320, currentSide * 1.5)
+  } catch { return false }
+}
+
 function isPlaceholderAlbum(value) {
   const album = String(value ?? '').trim()
   return !album || /^(?:unknown(?:\s+album)?|untitled(?:\s+album)?|n\/?a|none|null|undefined)$/i.test(album)
@@ -146,16 +169,26 @@ async function applyTags(filePath, changes = {}) {
     if (changes.disc && !file.tag.disc) { file.tag.disc = changes.disc; done.disc = changes.disc; dirty = true }
     if (changes.isrc && !file.tag.isrc) { file.tag.isrc = changes.isrc; done.isrc = changes.isrc; dirty = true }
     if (changes.genre && !(file.tag.genres || []).length) { file.tag.genres = [changes.genre]; done.genre = changes.genre; dirty = true }
-    // A cover for a file that has none (e.g. a bare audio link from an addon).
-    if (changes.coverBytes && !(file.tag.pictures || []).length) {
+    // Addon downloads can contain yt-dlp's undersized cover already. A
+    // better same-source image should replace that thumbnail, but only when
+    // measured pixels justify it. Never overwrite a decent embedded cover.
+    if (changes.coverBytes) {
       try {
-        const cover = T.Picture.fromData(T.ByteVector.fromByteArray(changes.coverBytes))
-        cover.type = T.PictureType.FrontCover
-        cover.mimeType = changes.coverMime || 'image/jpeg'
-        cover.description = 'Cover'
-        file.tag.pictures = [cover]
-        done.cover = true
-        dirty = true
+        const picture = frontCover(T, file)
+        const existing = picture?.data
+          ? Buffer.from(picture.data.toByteArray ? picture.data.toByteArray() : picture.data)
+          : null
+        const replace = !picture || (changes.upgradeLowResolutionCover &&
+          await shouldUpgradeEmbeddedCover(existing, changes.coverBytes))
+        if (replace) {
+          const cover = T.Picture.fromData(T.ByteVector.fromByteArray(changes.coverBytes))
+          cover.type = T.PictureType.FrontCover
+          cover.mimeType = changes.coverMime || 'image/jpeg'
+          cover.description = 'Cover'
+          file.tag.pictures = [cover]
+          done.cover = true
+          dirty = true
+        }
       } catch {}
     }
     if (changes.title || changes.artist) {
@@ -218,4 +251,4 @@ async function imageThumbnail(imagePath, size = 96) {
   } catch { return null }
 }
 
-module.exports = { readInfo, applyTags, stripArtistPrefix, isPlaceholderAlbum, coverThumbnail, imageThumbnail }
+module.exports = { readInfo, applyTags, stripArtistPrefix, isPlaceholderAlbum, coverThumbnail, imageThumbnail, shouldUpgradeEmbeddedCover }

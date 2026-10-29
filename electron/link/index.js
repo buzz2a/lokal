@@ -4,6 +4,7 @@ const { WebSocketServer, WebSocket } = require('ws')
 const QRCode = require('qrcode')
 const { LinkStore, safeEqual } = require('./store')
 const { installCapture } = require('./capture')
+const { reconcilePlaylists, savePlaylistSnapshot } = require('./reconcile')
 const { envelope, decode, text } = require('./protocol')
 const { advertise } = require('./discovery')
 let instance
@@ -93,8 +94,21 @@ function createLink({ server, db, remote, enabled = () => true }) {
           case 'queue': send(socket,'queue',{queue:remote.getRemoteState().queue || [],index:remote.getRemoteState().currentIndex ?? -1},message.id);break
           case 'history.pull': if (device.legacy) throw new Error('Pair this device before syncing');send(socket,'history.events',store.pull('history_events',device.user_id,body.cursor),message.id);break
           case 'history.push': if (device.legacy) throw new Error('Pair this device before syncing');send(socket,'ack',{ok:true,accepted:store.pushHistory(body.items,device.user_id,device.id)},message.id);break
-          case 'library.pull': if (device.legacy) throw new Error('Pair this device before syncing');send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor),message.id);break
-          case 'library.push': if (device.legacy) throw new Error('Pair this device before syncing');send(socket,'ack',{ok:true,accepted:store.applyOps(body.items,device.user_id,device.id)},message.id);break
+          case 'library.pull':
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            reconcilePlaylists(store, device.user_id)
+            send(socket,'library.ops',store.pull('library_ops',device.user_id,body.cursor),message.id)
+            break
+          case 'library.push': {
+            if (device.legacy) throw new Error('Pair this device before syncing')
+            // Capture desktop changes before applying phone edits. Snapshot the
+            // resulting state afterwards so remote operations are not echoed.
+            reconcilePlaylists(store, device.user_id)
+            const accepted = store.applyOps(body.items,device.user_id,device.id)
+            savePlaylistSnapshot(store, device.user_id)
+            send(socket,'ack',{ok:true,accepted},message.id)
+            break
+          }
           case 'theme': // Adopt only after the desktop owner explicitly opts in.
             if (db.prepare("SELECT value FROM settings WHERE key='link_theme_sync'").get()?.value==='1') await remote.sendRemoteCommand({action:'linkTheme',value:body,_trustedLinkTheme:true})
             break

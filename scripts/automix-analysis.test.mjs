@@ -60,3 +60,17 @@ test('key: C major and A minor', () => {
   assert.equal(minor.mode, 0)
   assert.equal(minor.camelot, '8A')
 })
+
+
+test('automix analysis emits bounded heuristic cue candidates', () => {
+  const result = analyze(song({ lead: 2, bpm: 120, length: 60 }))
+  assert.ok(result.transitionCues)
+  for (const field of ['entrances', 'exits']) {
+    assert.ok(Array.isArray(result.transitionCues[field]))
+    assert.ok(result.transitionCues[field].length <= 12)
+    for (const point of result.transitionCues[field]) {
+      assert.ok(point.time > 0 && point.time < result.audibleEnd)
+      assert.ok(point.confidence >= 0.35 && point.confidence <= 1)
+    }
+  }
+})

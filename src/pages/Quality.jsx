@@ -33,11 +33,11 @@ function StatTile({ tier, count, share, active, onClick, rollFrom }) {
   const info = TIERS[tier]
   return (
     <button onClick={onClick} title={t(info.hint)}
-      className={`flex h-full min-w-0 flex-col items-start justify-start gap-1.5 rounded-2xl border p-3 text-left transition-colors ${active ? 'border-accent/50 bg-accent/10' : 'border-border bg-card/50 hover:bg-card'}`}>
+      className={`flex h-full min-w-0 flex-col items-start justify-start gap-1.5 rounded-2xl border p-3 text-left transition-colors @4xl:px-2.5 ${active ? 'border-accent/50 bg-accent/10' : 'border-border bg-card/50 hover:bg-card'}`}>
       <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase leading-4 tracking-wide ${info.className}`}>{t(info.label)}</span>
       <AnimatedNumber value={count} from={rollFrom} className="mt-1 font-display text-2xl leading-8 tabular-nums text-white" />
       <span className="w-full truncate text-[11px] leading-4 text-muted/80 tabular-nums">{share}</span>
-      <span className="w-full truncate text-[11px] leading-4 text-muted">{t(info.desc)}</span>
+      <span className="w-full min-h-8 line-clamp-2 text-[11px] leading-4 text-muted">{t(info.desc)}</span>
     </button>
   )
 }
@@ -212,7 +212,9 @@ export default function Quality() {
           <p className="mt-3 text-xs text-muted">{unread.toLocaleString()} {t("tracks were added before Lokal kept their format: read their details to see them here.")}</p>
         )}
 
-        <div className="mt-4 grid grid-cols-2 gap-2 @sm:grid-cols-3 @lg:grid-cols-5">
+        {/* Six metrics: 2×3 on phones, 3×2 on medium layouts, a single
+            balanced row on wide desktops. Never leave Suspect orphaned. */}
+        <div className="mt-4 grid grid-cols-2 gap-2 @sm:grid-cols-3 @4xl:grid-cols-6">
           {['atmos', 'hires', 'lossless', 'high', 'low', 'suspect'].map(tier => (
             <StatTile key={tier} tier={tier} count={tiers[tier]} rollFrom={rollFrom(tiers[tier] || 0)} share={shareText(tier)} active={filter === tier} onClick={() => setFilter(tier)} />
           ))}

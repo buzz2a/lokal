@@ -27,7 +27,10 @@
         "game music soundtrack",
         "gaming music",
         "chiptune game music",
-        "videogame"
+        "videogame",
+        "game soundtracks",
+        "vgm remix",
+        "video game themes"
       ]
     ],
     [
@@ -50,7 +53,10 @@
         "film music",
         "stage and screen",
         "musical theatre",
-        "саундтрек"
+        "саундтрек",
+        "movie music",
+        "television score",
+        "cinematic score"
       ]
     ],
     [
@@ -67,7 +73,10 @@
         "anisong",
         "anison",
         "japanese animation music",
-        "japanese anime music"
+        "japanese anime music",
+        "anime op",
+        "anime ed",
+        "anisongs"
       ]
     ],
     [
@@ -99,7 +108,18 @@
         "japanese pop",
         "chinese pop",
         "pop ballad",
-        "поп"
+        "поп",
+        "city pop",
+        "japanese city pop",
+        "hyperpop",
+        "bedroom pop",
+        "alternative pop",
+        "alt pop",
+        "dark pop",
+        "indie dream pop",
+        "art pop rock",
+        "experimental pop",
+        "sophisti pop"
       ]
     ],
     [
@@ -142,7 +162,16 @@
         "pop rock",
         "art rock",
         "рэп рок",
-        "рок"
+        "рок",
+        "j-rock",
+        "visual kei",
+        "shoegaze",
+        "hardcore punk",
+        "post hardcore",
+        "psychedelic pop rock",
+        "folk rock",
+        "garage punk",
+        "alt metal rock"
       ]
     ],
     [
@@ -167,7 +196,14 @@
         "sludge metal",
         "speed metal",
         "gothic metal",
-        "melodic death metal"
+        "melodic death metal",
+        "djent",
+        "industrial metal",
+        "melodic metalcore",
+        "symphonic black metal",
+        "blackgaze",
+        "grindcore",
+        "post metal"
       ]
     ],
     [
@@ -219,7 +255,52 @@
         "rave",
         "electronic body music",
         "ebm",
-        "электронная музыка"
+        "электронная музыка",
+        "afro house",
+        "uk garage",
+        "2 step",
+        "garage house",
+        "melodic techno",
+        "minimal techno",
+        "organic house",
+        "bass house",
+        "future house",
+        "future garage",
+        "liquid dnb",
+        "liquid drum and bass",
+        "drum 'n' bass",
+        "hard techno",
+        "psytrance",
+        "goa trance",
+        "progressive trance",
+        "electro swing",
+        "gqom",
+        "amapiano",
+        "jazz house",
+        "lofi house",
+        "hardcore techno",
+        "uk funky",
+        "neurofunk",
+        "liquid funk",
+        "deep dubstep",
+        "jersey club",
+        "footwork",
+        "juke",
+        "bassline",
+        "bassline house",
+        "dub techno",
+        "minimal house",
+        "minimal tech",
+        "deep tech",
+        "microhouse",
+        "acid house",
+        "acid techno",
+        "acid trance",
+        "progressive psytrance",
+        "darkpsy",
+        "forest psytrance",
+        "melodic house",
+        "electroclash"
       ]
     ],
     [
@@ -239,7 +320,23 @@
         "conscious hip hop",
         "instrumental hip hop",
         "cloud rap",
-        "рэп"
+        "рэп",
+        "melodic rap",
+        "gangsta rap",
+        "gangster rap",
+        "uk drill",
+        "cloud hip hop",
+        "jazz rap",
+        "lofi rap",
+        "pop rap",
+        "emo rap",
+        "industrial rap",
+        "alternative rap",
+        "horrorcore",
+        "conscious rap",
+        "jazz hop",
+        "afro trap",
+        "g drill"
       ]
     ],
     [
@@ -265,7 +362,19 @@
         "g-funk",
         "p funk",
         "p-funk",
-        "blue-eyed soul"
+        "blue-eyed soul",
+        "alternative r&b",
+        "alt r&b",
+        "soul music",
+        "contemporary soul",
+        "southern soul",
+        "funk music",
+        "nu disco",
+        "boogie funk",
+        "electro funk",
+        "boogie soul",
+        "psychedelic soul",
+        "soul jazz"
       ]
     ],
     [
@@ -284,7 +393,15 @@
         "big band",
         "vocal jazz",
         "ragtime",
-        "dixieland"
+        "dixieland",
+        "spiritual jazz",
+        "cool jazz",
+        "hard bop",
+        "modal jazz",
+        "jazz funk",
+        "latin jazz",
+        "jazz rock fusion",
+        "avant garde jazz"
       ]
     ],
     [
@@ -306,7 +423,10 @@
         "romantic classical",
         "medieval",
         "renaissance music",
-        "камерная музыка"
+        "камерная музыка",
+        "modern classical",
+        "contemporary orchestral",
+        "minimalist classical"
       ]
     ],
     [
@@ -320,7 +440,9 @@
         "country pop",
         "modern country",
         "traditional country",
-        "honky tonk"
+        "honky tonk",
+        "alt-country",
+        "indie country"
       ]
     ],
     [
@@ -337,7 +459,12 @@
         "neofolk",
         "traditional",
         "traditional music",
-        "celtic folk"
+        "celtic folk",
+        "folk acoustic",
+        "contemporary folk",
+        "indie acoustic folk",
+        "psychedelic folk",
+        "experimental folk"
       ]
     ],
     [
@@ -362,7 +489,10 @@
         "dancehall",
         "roots reggae",
         "rocksteady",
-        "lovers rock"
+        "lovers rock",
+        "reggae fusion",
+        "dub reggae",
+        "reggae dancehall"
       ]
     ],
     [
@@ -383,7 +513,14 @@
         "tango",
         "bossa nova",
         "samba",
-        "mariachi"
+        "mariachi",
+        "urbano latino",
+        "latin dance",
+        "latin alternative",
+        "latin trap",
+        "latin house",
+        "latin hip hop",
+        "flamenco pop"
       ]
     ],
     [
@@ -405,7 +542,20 @@
         "ethnic music",
         "middle eastern",
         "arabic music",
-        "african music"
+        "african music",
+        "highlife",
+        "soukous",
+        "zouk",
+        "kizomba",
+        "raï",
+        "afrosoul",
+        "african pop",
+        "afro fusion",
+        "african fusion",
+        "afro jazz",
+        "desert blues",
+        "ethiopian jazz",
+        "ethio jazz"
       ]
     ],
     [
@@ -426,7 +576,14 @@
         "healing music",
         "cosmic",
         "dark ambient",
-        "space ambient"
+        "space ambient",
+        "atmospheric ambient",
+        "ambient drone",
+        "space music",
+        "ambient electronic",
+        "atmospheric drone",
+        "cinematic ambient",
+        "ambient electronica"
       ]
     ],
     [
@@ -441,7 +598,9 @@
         "praise and worship",
         "ccm",
         "religious music",
-        "christian contemporary"
+        "christian contemporary",
+        "modern gospel",
+        "urban gospel"
       ]
     ],
     [
@@ -451,7 +610,9 @@
         "independent music",
         "alternative",
         "alternative music",
-        "indie alternative"
+        "indie alternative",
+        "indie music",
+        "alternative indie"
       ]
     ],
     [
@@ -499,5 +660,284 @@
     "рэпкараоке",
     "караоке",
     "karaoke_plain"
+  ],
+  "hints": [
+    [
+      "Video Game Music",
+      [
+        "video game",
+        "videogame",
+        "game soundtrack",
+        "game music",
+        "game score",
+        "game ost",
+        "gaming music",
+        "vgm"
+      ]
+    ],
+    [
+      "Soundtrack",
+      [
+        "soundtrack",
+        "film score",
+        "movie score",
+        "television score",
+        "cinematic score",
+        "motion picture score",
+        "original score"
+      ]
+    ],
+    [
+      "Anime",
+      [
+        "anime",
+        "anisong",
+        "anison"
+      ]
+    ],
+    [
+      "Pop",
+      [
+        "pop",
+        "hyperpop",
+        "synthpop",
+        "electropop",
+        "dreampop",
+        "shibuya kei",
+        "schlager"
+      ]
+    ],
+    [
+      "Rock",
+      [
+        "rock",
+        "punk",
+        "grunge",
+        "shoegaze",
+        "screamo",
+        "psychobilly",
+        "post hardcore",
+        "posthardcore",
+        "hardcore punk",
+        "emo",
+        "rockabilly"
+      ]
+    ],
+    [
+      "Metal",
+      [
+        "metal",
+        "metalcore",
+        "deathcore",
+        "grindcore",
+        "djent",
+        "blackgaze",
+        "sludgecore"
+      ]
+    ],
+    [
+      "Electronic",
+      [
+        "electronic",
+        "electronica",
+        "techno",
+        "house",
+        "trance",
+        "dubstep",
+        "drum and bass",
+        "dnb",
+        "breakbeat",
+        "synthwave",
+        "vaporwave",
+        "hardstyle",
+        "electro",
+        "idm",
+        "jungle",
+        "garage",
+        "glitch",
+        "breakcore",
+        "speedcore",
+        "gabber",
+        "psybient",
+        "downtempo",
+        "trip hop",
+        "future bass",
+        "chiptune",
+        "witch house"
+      ]
+    ],
+    [
+      "Hip-Hop",
+      [
+        "hip hop",
+        "hiphop",
+        "rap",
+        "trap",
+        "drill",
+        "boom bap",
+        "grime",
+        "phonk",
+        "plugg",
+        "plugg n b",
+        "cloudrap"
+      ]
+    ],
+    [
+      "R&B / Soul",
+      [
+        "rnb",
+        "r and b",
+        "r b",
+        "soul",
+        "funk",
+        "disco",
+        "boogie",
+        "motown",
+        "quiet storm",
+        "new jack swing",
+        "neo soul"
+      ]
+    ],
+    [
+      "Jazz",
+      [
+        "jazz",
+        "bebop",
+        "hard bop",
+        "swing",
+        "ragtime",
+        "dixieland",
+        "big band",
+        "jazzfusion"
+      ]
+    ],
+    [
+      "Classical",
+      [
+        "classical",
+        "orchestral",
+        "opera",
+        "baroque",
+        "concerto",
+        "symphony",
+        "symphonic",
+        "chamber music",
+        "requiem",
+        "sonata",
+        "neoclassical"
+      ]
+    ],
+    [
+      "Country",
+      [
+        "country",
+        "bluegrass",
+        "americana",
+        "honky tonk",
+        "outlaw country",
+        "alt country"
+      ]
+    ],
+    [
+      "Folk",
+      [
+        "folk",
+        "acoustic folk",
+        "singer songwriter",
+        "neofolk"
+      ]
+    ],
+    [
+      "Blues",
+      [
+        "blues",
+        "delta blues",
+        "chicago blues"
+      ]
+    ],
+    [
+      "Reggae & Ska",
+      [
+        "reggae",
+        "ska",
+        "dancehall",
+        "rocksteady",
+        "dub",
+        "lovers rock"
+      ]
+    ],
+    [
+      "Latin",
+      [
+        "latin",
+        "reggaeton",
+        "salsa",
+        "bachata",
+        "cumbia",
+        "merengue",
+        "mariachi",
+        "bossa nova",
+        "samba",
+        "tango",
+        "norteno",
+        "forro",
+        "corrido"
+      ]
+    ],
+    [
+      "World",
+      [
+        "world",
+        "afrobeat",
+        "afrobeats",
+        "afropop",
+        "highlife",
+        "soukous",
+        "zouk",
+        "kizomba",
+        "rai",
+        "raï",
+        "arabesk",
+        "gnawa",
+        "qawwali",
+        "bhangra",
+        "bollywood",
+        "klezmer",
+        "flamenco",
+        "mbalax",
+        "afroswing"
+      ]
+    ],
+    [
+      "Ambient / New Age",
+      [
+        "ambient",
+        "new age",
+        "chillout",
+        "drone",
+        "soundscape",
+        "meditation",
+        "space music",
+        "relaxation"
+      ]
+    ],
+    [
+      "Gospel & Christian",
+      [
+        "gospel",
+        "christian",
+        "worship",
+        "ccm",
+        "spirituals"
+      ]
+    ],
+    [
+      "Indie / Alternative",
+      [
+        "indie",
+        "alternative",
+        "independent"
+      ]
+    ]
   ]
 }

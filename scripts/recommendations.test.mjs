@@ -26,7 +26,7 @@ function clientMock(overrides = {}) {
 
 test('saved priority excludes removed addons and includes newly available providers once', () => {
   assert.deepEqual(orderedPlaybackSources(JSON.stringify(['sc', 'removed', 'sc']), [{ id: 'yt' }, { id: 'sc' }, { id: addon }]).map(p => p.id), ['sc', 'yt', addon])
-  assert.deepEqual(orderedPlaybackSources('bad json').map(p => p.id), ['yt', 'sc'])
+  assert.deepEqual(orderedPlaybackSources('bad json').map(p => p.id), ['yt', 'sc', 'mono'])
 })
 
 test('search verification errors do not prompt until an addon match exists', async () => {

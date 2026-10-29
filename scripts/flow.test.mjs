@@ -125,3 +125,15 @@ test('how many songs a mood and tuner can play', () => {
   assert.equal(flowEligible(pool, { mood: 'workout' }), 2)
   assert.equal(flowEligible(pool, { tuner: { genres: { rock: false } } }), 1)
 })
+
+
+test('Flow prefers smooth tempo/energy handoffs without discarding discoveries', async () => {
+  const { transitionAffinity } = await import('../src/flow/engine.js')
+  const previous = { tempo: 120, energy: 0.5 }
+  assert.equal(transitionAffinity(previous, { tempo: 60, energy: 0.5 }), 1)
+  assert.equal(transitionAffinity(previous, { tempo: 240, energy: 0.5 }), 1) // untrusted tempo: neutral
+  assert.ok(transitionAffinity(previous, { tempo: 125, energy: 0.55 }) >
+    transitionAffinity(previous, { tempo: 170, energy: 0.95 }))
+  assert.equal(transitionAffinity(previous, { genre: 'Jazz' }), 1)
+  assert.ok(transitionAffinity(previous, { tempo: 170, energy: 0.95 }) > 0)
+})

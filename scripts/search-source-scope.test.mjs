@@ -174,3 +174,37 @@ test('Lyrics gets dedicated category and actual lyric records, not relabeled son
   assert.match(remote, /r\.plainLyrics \|\| r\.syncedLyrics/)
   assert.match(remote, /playRecommendationPool/)
 })
+
+test('global catalogue context menus resolve metadata before queue, playlist and like actions', () => {
+  const source = readFileSync(new URL('../src/components/GlobalCatalogueResults.jsx', import.meta.url), 'utf8')
+  assert.match(source, /const withResolvedSong = async \(song, action\)/)
+  assert.match(source, /const \[track\] = await resolveOnline\(\[song\]\)/)
+  assert.match(source, /withResolvedSong\(song, track => playNextMany\(\[track\]\)\)/)
+  assert.match(source, /withResolvedSong\(song, track => addToQueueMany\(\[track\]\)\)/)
+  assert.match(source, /withResolvedSong\(song, track => addToPlaylistMany\(\[track\]\)\)/)
+  assert.match(source, /downloadOnline\(\[song\]\)/)
+  assert.match(source, /onContextMenu=\{event => openSongMenu\(event, row\)\}/)
+  assert.match(source, /onContextMenu=\{event => openAlbumMenu\(event, origin, row\)\}/)
+  assert.match(source, /onContextMenu=\{event => openArtistMenu\(event, origin, row\)\}/)
+})
+
+test('provider and addon search menus keep their exact source for queue, likes, navigation and downloads', () => {
+  const source = readFileSync(new URL('../src/components/OnlineResults.jsx', import.meta.url), 'utf8')
+  assert.match(source, /const withTrack = async \(item, action\)/)
+  assert.match(source, /const \[row\] = await asTracks\(\[item\]\)/)
+  assert.match(source, /withTrack\(item, row => playNextMany\(\[row\]\)\)/)
+  assert.match(source, /withTrack\(item, row => addToQueueMany\(\[row\]\)\)/)
+  assert.match(source, /toggleResultLike\(item\)/)
+  assert.match(source, /withTrack\(item, saveToLibrary\)/)
+  assert.match(source, /trackAlbumPath\(\{ \.\.\.item, provider: anchor\.provider \}\)/)
+  assert.match(source, /artistPath\(item\.artist\)/)
+  assert.match(source, /openRadio\(nav, item,/)
+  assert.match(source, /atmosDownloadRef\(item\) &&/)
+  assert.match(source, /onContextMenu=\{event => openResultMenu\(event, item, i\)\}/)
+  // A right click must not create a ghost or download the result by itself.
+  const menuBlock = source.split('const openResultMenu =')[1].split('const addToPlaylist =')[0]
+  assert.doesNotMatch(menuBlock, /await asTracks\(/)
+  for (const localOnly of ['Edit info', 'Open in file manager', 'Replace artwork', 'Delete from library']) {
+    assert.doesNotMatch(menuBlock, new RegExp(localOnly))
+  }
+})

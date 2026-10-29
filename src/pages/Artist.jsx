@@ -21,6 +21,7 @@ import ReleaseTypeFilter from '../components/ReleaseTypeFilter'
 import { groupReleases, releaseTypeCounts, useReleaseTypes } from '../releaseTypes'
 import FollowArtistButton from '../components/FollowArtistButton'
 import { playNextMany } from '../trackActions'
+import { selectedGlobalArtist } from '../globalArtistNavigation.mjs'
 
 const RELEASE_LAYOUTS_KEY = 'lokal-artist-release-layouts'
 const releaseIdentityPart = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
@@ -48,6 +49,11 @@ export default function Artist() {
   const { id } = useParams()
   const nav = useNavigate()
   const location = useLocation()
+  // Catalogue artist identity is separate from the slug used for local artists.
+  // A same-slug library entry must never shadow a selected Spotify/Apple artist.
+  const catalogueArtist = selectedGlobalArtist(location, id)
+  const catalogueIdentityKey = catalogueArtist
+    ? `${catalogueArtist.catalogue}:${catalogueArtist.artistId}` : ''
   const [artist, setArtist] = useState(null)
   const [allArtists, setAllArtists] = useState([])
   const [selectedAlbum, setSelectedAlbum] = useState(null)
@@ -67,7 +73,8 @@ export default function Artist() {
   onlineRef.current = online
   // Their name as the link gave it ("Earth, Wind & Fire"; the id is a slug).
   const onlineNames = useRef({})
-  if (location.state?.name) onlineNames.current[id] = { name: location.state.name, anchor: location.state.anchor || null }
+  const onlineNameKey = `${id}:${catalogueIdentityKey}`
+  if (location.state?.name) onlineNames.current[onlineNameKey] = { name: location.state.name, anchor: location.state.anchor || null }
   const playQueue = usePlayerStore(s => s.playQueue)
   const artistContext = makeArtistContext(id, artist?.name)
   // Set by the "playing from ..." shortcut so we can scroll to the playing track.
@@ -124,6 +131,11 @@ export default function Artist() {
   }, [artist, highlightTrackId, highlightRequestKey])
 
   const load = () => {
+    if (catalogueArtist) {
+      setArtist(null)
+      setOnline(true)
+      return
+    }
     setOnline(false)
     Promise.all([api.getArtist(id), api.getSettings()]).then(([data, appSettings]) => {
       if (!data?.id || !data.tracks?.length) { setArtist(null); setOnline(true); return }
@@ -145,7 +157,7 @@ export default function Artist() {
     api.getArtists().then(setAllArtists)
   }
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => { load() }, [id, catalogueIdentityKey])
 
   useEffect(() => {
     // An online artist page stays online while it's open (a download of one
@@ -157,7 +169,7 @@ export default function Artist() {
     }
     window.addEventListener('lokal:refresh', handleRefresh)
     return () => window.removeEventListener('lokal:refresh', handleRefresh)
-  }, [id])
+  }, [id, catalogueIdentityKey])
 
   const pickArtistImage = async () => {
     if (!artist) return
@@ -209,7 +221,14 @@ export default function Artist() {
     return releaseTypeCounts([...mainReleaseList, ...online])
   }, [releaseList, mainReleaseList, connected, onlineData.albums.items])
 
-  if (online) return <OnlineArtist key={id} id={id} name={onlineNames.current[id]?.name} anchor={onlineNames.current[id]?.anchor} />
+  if (online || catalogueArtist) return <OnlineArtist
+    key={`${id}:${catalogueIdentityKey}`} id={id}
+    name={catalogueArtist?.name || onlineNames.current[onlineNameKey]?.name}
+    anchor={catalogueArtist
+      ? { provider: `catalogue:${catalogueArtist.catalogue}`, artistId: catalogueArtist.artistId }
+      : onlineNames.current[onlineNameKey]?.anchor}
+    catalogueIdentity={catalogueArtist}
+  />
   if (!artist) return <div className="p-6 text-muted text-sm">{t("Loading...")}</div>
 
   // Web mode previously hardcoded this to null, so the artist detail page

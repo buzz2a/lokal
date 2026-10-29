@@ -311,9 +311,9 @@ class DownloadManager {
   }
 
   /** The library track downloaded from the online song `ref`, or null. */
-  libraryTrackWithRef(ref) {
+  libraryTrackWithRef(ref, { atmos = false } = {}) {
     try {
-      const track = this.db().prepare("SELECT id, title, file_path FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' LIMIT 1").get(ref)
+      const track = this.db().prepare("SELECT id, title, file_path, atmos_verified FROM tracks WHERE source_ref = ? AND file_path NOT LIKE 'ghost://%' AND COALESCE(atmos_verified, 0) = ? LIMIT 1").get(ref, atmos ? 1 : 0)
       return track && fs.existsSync(track.file_path) ? track : null
     } catch { return null }
   }
@@ -535,8 +535,10 @@ class DownloadManager {
     // Merge all playlist requests even when they use exactly the same URL.
     // Addon identities take precedence: a shared endpoint can serve different songs.
     const ref = jobSourceRef(kind, url, opts)
+    const atmosIntent = packageSource && opts.explicitAtmosDownload === true && opts.addonQuality === 'DOLBY_ATMOS'
     const running = [...this.jobs.values()].find(j => ACTIVE.has(j.status) && !j.stop &&
-      (ref ? j.sourceRef === ref : j.url === url && j.kind === kind))
+      (ref ? j.sourceRef === ref : j.url === url && j.kind === kind) &&
+      (!packageSource || (j.opts?.explicitAtmosDownload === true) === atmosIntent))
     if (running) {
       if (opts.replaceTrackId && opts.replaceTrackId !== running.opts.replaceTrackId) {
         if (!running.opts.replaceTrackId) running.opts.replaceTrackId = opts.replaceTrackId
@@ -556,8 +558,16 @@ class DownloadManager {
       return { downloadId: running.id, playlistId: running.playlistId, duplicate: true }
     }
     if (ref && kind !== 'music-video') {
-      const owned = this.libraryTrackWithRef(ref)
+      const owned = this.libraryTrackWithRef(ref, { atmos: atmosIntent })
+      // Stereo and Atmos editions must be checked independently: a saved
+      // stereo FLAC never satisfies Atmos and an Atmos file never satisfies
+      // a regular FLAC download.
       if (owned) {
+        // An Atmos edition is a separate library item: never rewrite the
+        // streamed stereo ghost or imported playlist/like references.
+        if (atmosIntent) {
+          return { alreadyInLibrary: true, trackId: owned.id, error: `Already in your library: ${owned.title || 'this song'}` }
+        }
         try {
           const db = this.db()
           const { resolveGhostTrack } = require('../../server/routes/playlists')
@@ -1058,6 +1068,7 @@ class DownloadManager {
       const { provider, id } = job.opts.addonSource
       artifact = await this.downloadPackageWithVerification(provider.slice(2), id, {
         signal: controller.signal, quality: job.opts.addonQuality,
+        allowAtmos: job.opts.explicitAtmosDownload === true && job.opts.addonQuality === 'DOLBY_ATMOS',
         onProgress: update => { if (job.packageRunId === runId && !job.stop) this.update(job, { progress: update.percent ?? job.progress, message: update.message || 'Downloading addon audio…' }) },
       }, {
         onVerificationRequired: () => this.update(job, { message: 'Waiting for addon verification…' }),
@@ -1067,7 +1078,7 @@ class DownloadManager {
       const outputDir = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
       fs.ensureDirSync(outputDir)
       const title = String(job.title || 'Addon Track').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0,180)
-      const ext = path.extname(artifact.file)
+      const ext = job.opts.explicitAtmosDownload ? '.atmos.m4a' : path.extname(artifact.file)
       let target = path.join(outputDir, `${title}${ext}`)
       for (let suffix = 1; fs.existsSync(target); suffix++) target = path.join(outputDir, `${title} (${suffix})${ext}`)
       await fs.copy(artifact.file, target, { overwrite: false, errorOnExist: true })
@@ -1309,7 +1320,10 @@ class DownloadManager {
         if (!job.stop) this.update(job, { message: `Adding lyrics: ${path.basename(filepath)}` })
         const outputDir = require('../storageLocations').downloadDirectory(job.settings, job.opts.outputDir)
         // Apple Lossless and other codecs the player can't decode: FLAC (or AAC) first.
-        const playable = await makePlayable(filepath, { ffmpeg: this.deps.findTools?.()?.ffmpeg })
+        // Never transcode E-AC-3 JOC to AAC in the ordinary Chromium
+        // compatibility pipeline: Atmos is saved as a verified bitstream.
+        const playable = job.opts.explicitAtmosDownload ? filepath
+          : await makePlayable(filepath, { ffmpeg: this.deps.findTools?.()?.ffmpeg })
         if (playable !== filepath) {
           job.outputLines.push(`[Lokal] Converted ${path.basename(filepath)} to ${path.extname(playable).slice(1).toUpperCase()} so it plays in Lokal`)
           const fileIndex = job.filepaths.indexOf(filepath)
@@ -1324,7 +1338,11 @@ class DownloadManager {
         // Stopped: the files already downloaded are still tagged and added,
         // but without looking up lyrics, so stopping doesn't wait on a backlog.
         const settings = job.stop ? { ...(job.settings || {}), download_embed_lyrics: '0' } : (job.settings || {})
-        const done = await finishFile(filepath, { db: this.db(), settings, url: job.url, meta, kind: job.kind, outputDir, known: job.opts?.tags || null })
+        // Do not rewrite compressed Atmos MP4 atoms with the generic tagger;
+        // its metadata was already set during the copy/remux and verified.
+        const done = job.opts.explicitAtmosDownload
+          ? { filePath: filepath, lyrics: null, cover: false }
+          : await finishFile(filepath, { db: this.db(), settings, url: job.url, meta, kind: job.kind, outputDir, known: job.opts?.tags || null })
         finalPath = done.filePath
         // Explicit output paths and lossless replacements keep their own destinations.
         const downloadFolder = String(job.settings?.download_folder || '').trim()
@@ -1423,7 +1441,16 @@ class DownloadManager {
       // its track, which keeps its playlists, likes and history. Otherwise
       // indexing would only see a duplicate and leave the new file out of the
       // library (a later rescan then added it as a file of unknown source).
-      const upgraded = result?.duplicate && result.id ? await this.replaceWorseCopy(job, result.id, filepath) : false
+      if (job.opts?.explicitAtmosDownload && result?.duplicate) {
+        // A second Atmos edition already exists (perhaps from another addon).
+        // Do not claim this downloaded file was added to the library when
+        // the scanner correctly returned the existing Atmos row instead.
+        job.outputLines.push('[Lokal] This Dolby Atmos edition is already indexed; downloaded copy kept on disk')
+        this.update(job, { message: 'Downloaded · Atmos edition already in library', removed: false }, { persist: true })
+        return { ...result, libraryAdded: false }
+      }
+      const upgraded = !job.opts?.explicitAtmosDownload && result?.duplicate && result.id
+        ? await this.replaceWorseCopy(job, result.id, filepath) : false
       if (result?.id) {
         // Where it came from: tells versions apart, and stops a second download.
         // A file already in the library (indexing gave back its track) keeps
@@ -1467,7 +1494,8 @@ class DownloadManager {
         // was found for: they must actually take their ghost row's place before
         // this download can count as library-added.
         let importedReplacementFailed = false
-        const importedGhosts = job.kind === 'single' ? [...new Set(job.opts?.replaceImported || [])] : []
+        const importedGhosts = job.kind === 'single' && !job.opts?.explicitAtmosDownload
+          ? [...new Set(job.opts?.replaceImported || [])] : []
         if (importedGhosts.length) {
           try {
             const db = this.db()
@@ -1515,7 +1543,8 @@ class DownloadManager {
           return { ...result, error: message, libraryAdded: false }
         }
 
-        if (job.opts?.replaceTrackId && (job.kind === 'single' || job.kind === 'soulseek')) {
+        if (!job.opts?.explicitAtmosDownload && job.opts?.replaceTrackId &&
+            (job.kind === 'single' || job.kind === 'soulseek')) {
           try {
             const addon = job.opts.addonSource
             // Several clicks on the same song (search list, player bar) while
@@ -1531,12 +1560,16 @@ class DownloadManager {
           } catch {}
         }
         // The imported batch has committed; ordinary ISRC matching can now run.
-        try { require('../ipc/playlists').resolveGhostsByIsrc(this.db(), result.id) } catch {}
+        if (!job.opts?.explicitAtmosDownload) {
+          try { require('../ipc/playlists').resolveGhostsByIsrc(this.db(), result.id) } catch {}
+        }
         // The same song liked or added to a playlist from another source.
-        try {
-          const track = this.db().prepare('SELECT id, title, artist, duration FROM tracks WHERE id = ?').get(result.id)
-          for (const ghostId of streamedTwins(this.db(), track)) if (!replaced.has(ghostId)) replace(ghostId, null)
-        } catch {}
+        if (!job.opts?.explicitAtmosDownload) {
+          try {
+            const track = this.db().prepare('SELECT id, title, artist, duration FROM tracks WHERE id = ?').get(result.id)
+            for (const ghostId of streamedTwins(this.db(), track)) if (!replaced.has(ghostId)) replace(ghostId, null)
+          } catch {}
+        }
 
         // Only now does the list show the song (which refreshes the library
         // pages): once it has taken the streamed version's place, so a

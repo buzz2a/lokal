@@ -1,6 +1,6 @@
 {
   "name": "lokal-music",
-  "version": "12.0.6",
+  "version": "12.3.5",
   "description": "Local-first music player built w/ Electron and React. Designed for people with large local music libraries who'd like a modern listening experience w/o the burdens of streaming subscriptions.",
   "author": "sipbuu <97703296+sipbuu@users.noreply.github.com>",
   "main": "electron/main.js",
@@ -24,6 +24,7 @@
     "test:artist-roles": "node --test scripts/artist-roles.test.mjs",
     "test:artist-search-keys": "node --test scripts/artist-search-result-keys.test.mjs",
     "test:ported": "node --test scripts/artist-metadata-rescan.test.mjs scripts/artist-split.test.mjs scripts/cover-mix.test.mjs scripts/download-addon-pacing.test.mjs scripts/genre-cleanup.test.mjs scripts/genre-playlist.test.mjs scripts/file-tags.test.mjs scripts/library-folder-view.test.mjs scripts/library-folder-operations.test.mjs scripts/library-watch.test.mjs scripts/video-section-dedupe.test.mjs scripts/pr222-regression.test.mjs scripts/online-browse.test.mjs scripts/release-types.test.mjs scripts/replaygain.test.mjs scripts/review-fixes.test.mjs scripts/yandex-music-package.test.mjs scripts/issue-458-regression.test.mjs scripts/mpris-config.test.mjs scripts/file-artwork.test.mjs scripts/artwork-download.test.mjs scripts/artist-roles.test.mjs scripts/fullscreen-visualizer-settings.test.mjs scripts/fullscreen-appearance.test.mjs scripts/fullscreen-lyrics-layout.test.mjs scripts/cover-flow.test.mjs",
+    "test:desktop-link-playlists": "node --test scripts/desktop-link-playlist-reconcile.test.mjs",
     "test:phone-copy": "node --test scripts/phone-file-naming.test.mjs scripts/phone-file-legacy-migration.test.mjs scripts/phone-copy-integrity.test.mjs",
     "test:atmos": "node --test scripts/tidal-atmos-metadata.test.mjs scripts/atmos-output.test.mjs scripts/atmos-transfer-progress.test.mjs scripts/atmos-library-quality.test.mjs scripts/atmos-stereo-handoff.test.mjs",
     "test:loading-toasts": "node --test scripts/loading-toast-progress.test.mjs scripts/stream-buffer-progress.test.mjs scripts/recommendations.test.mjs scripts/recommendation-downloads.test.mjs scripts/ghost-downloads.test.mjs",
@@ -31,6 +32,7 @@
     "test:mpris": "node --test scripts/mpris-config.test.mjs",
     "test:added-date": "node --test scripts/added-date.test.mjs",
     "test:download-folder": "node --test scripts/download-folder.test.mjs",
+    "test:lyrics-voice-prefix": "node --test scripts/lrc-voice-prefix.test.mjs",
     "test:visualizer-analyser-startup": "node --test scripts/visualizer-analyser-startup.test.mjs",
     "test:fullscreen-visualizer-settings": "node --test scripts/fullscreen-visualizer-settings.test.mjs",
     "test:fullscreen-appearance": "node --test scripts/fullscreen-appearance.test.mjs scripts/fullscreen-lyrics-layout.test.mjs",
@@ -44,6 +46,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "src/artworkQuality.mjs",
       "package.json",
       "server/**/*",
       "public/remote.html",
@@ -195,6 +198,7 @@
     "sharp": "^0.35.5",
     "three": "^0.175.0",
     "tough-cookie": "6.0.0",
+    "webwallgl": "3.0.0",
     "ws": "^8.22.0",
     "yauzl": "^3.4.0",
     "youtubei.js": "^17.2.0"

@@ -33,7 +33,8 @@ import { isOnlineTrack } from '../onlineBrowse'
 import { isStationTrack } from '../radio/stations'
 import { resolveStationSong } from '../radio/stationSong'
 import { showToast } from './Toaster'
-import { isStreamed, trackArtURL } from '../onlineTracks'
+import { isStreamed, trackArtURL, trackFullArtURL } from '../onlineTracks'
+import { artworkCandidates } from '../artworkQuality.mjs'
 
 import ContextMenu, { useContextMenu } from './ContextMenu'
 import { openRadio } from '../radioActions'
@@ -88,6 +89,59 @@ function streamQualityLabel(track) {
   const parts = [String(track.codec).toUpperCase()]
   if (track.bit_depth && track.sample_rate) parts.push(`${track.bit_depth}-bit / ${Number(track.sample_rate) / 1000} kHz`)
   return parts.join(' · ')
+}
+
+// The sidebar cover is a large, full-bleed surface: do not enlarge the
+// library's generated thumbnail here. Try the original embedded artwork (as
+// fullscreen does), plus provider-specific high-resolution CDN variants.
+// The known thumbnail remains visible while images decode and if every
+// higher-resolution candidate fails.
+function SidebarStillArtwork({ track }) {
+  const thumbnail = trackArtURL(track)
+  const full = trackFullArtURL(track) || thumbnail
+  const sources = [...new Set([...artworkCandidates(full), ...(thumbnail ? [thumbnail] : [])])]
+  const sourceKey = sources.join('\n')
+  const [resolved, setResolved] = useState({ key: null, src: null })
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      let best = null
+      let bestSize = 0
+      for (const src of sources) {
+        const image = new Image()
+        image.decoding = 'async'
+        try {
+          image.src = src
+          if (image.decode) await image.decode()
+          else await new Promise((resolve, reject) => {
+            image.onload = resolve
+            image.onerror = reject
+          })
+          // Some CDNs return a tiny placeholder with HTTP 200 for an
+          // unavailable large image (notably YouTube maxresdefault).
+          // Keep looking rather than treating that as high-resolution art.
+          const size = Math.min(image.naturalWidth, image.naturalHeight)
+          if (size > bestSize) {
+            best = src
+            bestSize = size
+          }
+          if (size >= 640) break
+        } catch { /* Try another size, ultimately the existing thumbnail. */ }
+      }
+      if (active) setResolved({ key: sourceKey, src: best })
+    }
+    if (sourceKey) void load()
+    return () => { active = false }
+  }, [sourceKey])
+
+  const upgraded = resolved.key === sourceKey ? resolved.src : null
+  return (
+    <>
+      {thumbnail && <img src={thumbnail} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />}
+      {upgraded && upgraded !== thumbnail && <img src={upgraded} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />}
+    </>
+  )
 }
 
 export default function RightSidebar() {
@@ -528,7 +582,7 @@ export default function RightSidebar() {
                   {artSrc ? (
                     <MixCovers track={currentTrack} render={(track, { top }) => (
                       <>
-                        <img src={trackArtURL(track)} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                        <SidebarStillArtwork track={track} />
                         {top && <MotionCover trackId={track?.id} only="square" off={coverOff} />}
                         {top && <MotionCover trackId={track?.id} only="tall" onActive={setCanvasOn} off={coverOff} />}
                       </>

@@ -1,0 +1,54 @@
+name: AutoMix and Flow analysis regressions
+
+on:
+  pull_request:
+    paths:
+      - 'electron/automix/**'
+      - 'electron/ipc/automix.js'
+      - 'src/audio/automix.js'
+      - 'src/flow/engine.js'
+      - 'src/App.jsx'
+      - 'scripts/automix-*.mjs'
+      - 'scripts/flow.test.mjs'
+      - '.github/workflows/automix-flow-ci.yml'
+  push:
+    paths:
+      - 'electron/automix/**'
+      - 'electron/ipc/automix.js'
+      - 'src/audio/automix.js'
+      - 'src/flow/engine.js'
+      - 'src/App.jsx'
+      - 'scripts/automix-*.mjs'
+      - 'scripts/flow.test.mjs'
+      - '.github/workflows/automix-flow-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis-and-flow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install desktop dependencies
+        run: npm ci --ignore-scripts
+      - name: Compile desktop renderer and Electron imports
+        run: |
+          npm run test:electron-syntax
+          npm run gen:icons
+          npx vite build
+      - name: Run AutoMix and Flow regression suite
+        run: >-
+          node --test
+          scripts/automix-analysis.test.mjs
+          scripts/automix-decode.test.mjs
+          scripts/automix-file-cache.test.mjs
+          scripts/automix-model-cues.test.mjs
+          scripts/automix-stem-live.test.mjs
+          scripts/automix-plan.test.mjs
+          scripts/flow.test.mjs

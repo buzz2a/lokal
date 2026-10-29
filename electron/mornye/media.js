@@ -6,6 +6,7 @@ const { Readable } = require('stream')
 const { service } = require('./packages')
 const { stereoPlaybackQuality } = require('./playbackQuality')
 const { progressiveMedia } = require('./progressiveMedia')
+const { isLiveProvider } = require('./providerFastPath')
 
 // Keep custom/isolated package-service roots working as before. Only redirect
 // persistent playable bytes when the user explicitly picked another cache disk.
@@ -38,13 +39,19 @@ function prepare(db,key,id,{force=false}={}){
   const map=state(db),hash=cacheKey(db,key,id)
   const existing=[...map.values()].find(job=>job.hash===hash&&job.status==='running')
   if(existing)return {pending:true,operationId:existing.id}
-  const job={id:crypto.randomUUID(),hash,key,itemId:id,status:'running',progress:0,controller:new AbortController()};map.set(job.id,job)
+  const job={id:crypto.randomUUID(),hash,key,itemId:id,status:'running',progress:0,startedAt:Date.now(),controller:new AbortController()};map.set(job.id,job)
   job.liveReady=new Promise(resolve=>{job.markLive=resolve})
   const addon=service(db).find(key)
+  const startedAt=Date.now()
   const quality=stereoPlaybackQuality(addon,service(db).settings(addon))
-  const fetchAudio=()=>service(db).download(key,id,{purpose:'playback',quality,signal:job.controller.signal,onLive:info=>liveUpdate(job,info),onProgress:update=>{job.progress=update.percent ?? job.progress;job.message=job.live?.ready?'Playing while it downloads…':update.message || 'Preparing audio…'}})
+  // Do not probe a growing file for providers that only deliver a usable
+  // result after segment assembly/decryption. They use this same downloader,
+  // then hand the completed validated file to the player.
+  const liveAllowed=isLiveProvider(addon)
+  const fetchAudio=()=>service(db).download(key,id,{purpose:'playback',quality,signal:job.controller.signal,onLive:liveAllowed?info=>liveUpdate(job,info):undefined,onProgress:update=>{job.progress=update.percent ?? job.progress;job.message=job.live?.ready?'Playing while it downloads…':update.message || 'Preparing audio…'}})
   // A worker that ran out of memory is retried once, in a fresh worker.
   job.promise=fetchAudio().catch(error=>{if(job.controller.signal.aborted||!/memory limit|out of memory/i.test(error?.message))throw error;logFailure(db,key,id,error);job.message='Retrying…';return fetchAudio()}).then(async result=>{
+    let staging=null
     try{
       const dir=addonAudioCache(db);await fsp.mkdir(dir,{recursive:true})
       // Played as it arrived: the cache keeps those very bytes (a rewritten
@@ -54,11 +61,34 @@ function prepare(db,key,id,{force=false}={}){
       if(!MIME[ext])throw new Error('Unsupported cached audio container')
       const file=path.join(dir,`${hash}.${ext}`)
       job.controller.signal.throwIfAborted()
-      await fsp.copyFile(source,`${file}.tmp`);job.controller.signal.throwIfAborted();await fsp.rename(`${file}.tmp`,file)
+      // Once the downloader has finished and verified a non-live recording,
+      // move its exact bytes into the playback cache instead of copying a
+      // second full track before Play can start. External cache volumes need
+      // the previous copy fallback (EXDEV on Linux/macOS/Windows).
+      staging=`${file}.tmp`
+      const relative=path.relative(result.staging,source)
+      const isStaged=relative!==''&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative)
+      if(!job.live?.ready&&isStaged){
+        try{await fsp.rename(source,staging)}
+        catch(error){
+          if(!['EXDEV','EPERM','EACCES'].includes(error.code))throw error
+          await fsp.copyFile(source,staging)
+        }
+      }else{
+        // A Qobuz reader may still have the original growing-file path open.
+        await fsp.copyFile(source,staging)
+      }
+      job.controller.signal.throwIfAborted();await fsp.rename(staging,file)
       job.status='done';job.progress=100;job.result={type:'file',file,mime:MIME[ext],headers:{},format:ext}
+      console.info(`[Mornye] ${addon.name} playback stage=playback_ready elapsedMs=${Date.now()-startedAt}`)
       // The cache joins Lokal's shared limit; installed code and credentials do not.
       require('../cache').trim({keep:[file]})
-    }finally{await result.cleanup()}
+    }finally{
+      // A cancelled write after moving staged bytes must not leave an
+      // orphaned audio-cache .tmp file in the user's cache directory.
+      try{if(staging)await fsp.rm(staging,{force:true})}
+      finally{await result.cleanup()}
+    }
   }).catch(error=>{
     job.status=job.controller.signal.aborted?'cancelled':'error';job.error=error.message
     // Kept in Lokal's log: without it a song that won't stream says nothing about why.
@@ -93,6 +123,7 @@ function liveUpdate(job,{part,file,total,written,done}){
     if(playable){
       Object.assign(live,playable,{ready:true})
       job.message='Playing while it downloads…'
+      console.info(`[Mornye] qobuz playback stage=live_ready elapsedMs=${Date.now()-job.startedAt}`)
       job.markLive()
     }
   }catch{

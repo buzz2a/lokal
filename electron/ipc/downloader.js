@@ -162,6 +162,8 @@ function registerDownloaderHandlers(ipcMain) {
     const provider = String(source?.provider || '')
     clean.addonSource = /^a-[0-9a-f]{10}$/.test(provider) && typeof source?.id === 'string' && source.id && source.id.length <= 300 && !/[\r\n]/.test(source.id)
       ? { provider, id: source.id } : undefined
+    clean.explicitAtmosDownload = clean.addonSource && clean.explicitAtmosDownload === true && clean.addonQuality === 'DOLBY_ATMOS'
+    clean.addonQuality = clean.explicitAtmosDownload ? 'DOLBY_ATMOS' : undefined
     // What the source said about the song, for a file that comes without tags.
     clean.tags = require('../download/postprocess').knownTagsOf(clean.tags)
     const expectedDuration = Number(clean.expectedDuration)

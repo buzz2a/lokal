@@ -21,6 +21,35 @@ function stampToSeconds(min, sec, frac) {
   return round3(parseInt(min, 10) * 60 + parseInt(sec, 10) + fraction)
 }
 
+// Some LRC providers (including lrc.red via Mornye) annotate vocal roles as
+// "v1:" / "v2:" at the start of each lyric. This is structural metadata,
+// not a sung word. Preserve the agent for duet placement, and strip only when
+// the marker is anchored to the start of the line (not a lyric mentioning v1).
+function stripVoicePrefix(line) {
+  if (!line || typeof line.text !== 'string') return line
+  const tag = line.text.match(/^v(\d{1,4}):\s*/i)
+  if (!tag) return line
+  const text = line.text.slice(tag[0].length).trimStart()
+  if (!text) return line
+
+  let words = line.words
+  if (Array.isArray(words) && words.length) {
+    words = words.slice()
+    const first = String(words[0].word || '')
+    const leading = first.match(/^v\d{1,4}:\s*/i)
+    if (leading) {
+      const remainder = first.slice(leading[0].length)
+      if (remainder) words[0] = { ...words[0], word: remainder }
+      else words.shift()
+    } else {
+      // A malformed enhanced lyric has no safe word-to-text alignment after
+      // removing its marker. Keep line timing rather than inventing word data.
+      words = []
+    }
+  }
+  return { ...line, text, words, agent: line.agent || 'v' + Number(tag[1]) }
+}
+
 function readOffset(text) {
   const m = String(text).match(/^\[offset\s*:\s*([+-]?\d+)\s*\]/im)
   return m ? parseInt(m[1], 10) / 1000 : 0
@@ -80,7 +109,7 @@ function parseLRC(text) {
       continue
     }
     const body = decodeEntities(line.slice(lastIndex).replace(WORD_STAMP, '')).replace(/\s+/g, ' ').trim()
-    previous = stamps.map(t => ({ time: Math.max(0, round3(t - offset)), end: null, endStated: false, text: body, words: [] }))
+    previous = stamps.map(t => stripVoicePrefix({ time: Math.max(0, round3(t - offset)), end: null, endStated: false, text: body, words: [] }))
     out.push(...previous)
   }
   out.sort((a, b) => a.time - b.time)
@@ -137,8 +166,9 @@ function parseEnhancedLRC(text) {
       text: joinUnits(words),
       words,
     }
-    out.push(entry)
-    previous = [entry]
+    const clean = stripVoicePrefix(entry)
+    out.push(clean)
+    previous = [clean]
   }
   out.sort((a, b) => a.time - b.time)
   return attachTranslations(out, extras)
@@ -204,8 +234,9 @@ function parseKaraokeLRC(raw) {
       text: joinUnits(words),
       words,
     }
-    out.push(entry)
-    previous = [entry]
+    const clean = stripVoicePrefix(entry)
+    out.push(clean)
+    previous = [clean]
   }
   out.sort((a, b) => a.time - b.time)
   return attachTranslations(out, extras)
@@ -217,7 +248,7 @@ function parsePlain(text) {
   return String(text).replace(/\r/g, '').split('\n')
     .map(l => l.trim())
     .filter(l => l && !META_TAG.test(l))
-    .map(l => ({ time: null, end: null, text: l, words: [] }))
+    .map(l => stripVoicePrefix({ time: null, end: null, text: l, words: [] }))
 }
 
-module.exports = { parseLRC, parseEnhancedLRC, parseKaraokeLRC, parsePlain, isEnhanced, isKaraoke, stampToSeconds }
+module.exports = { parseLRC, parseEnhancedLRC, parseKaraokeLRC, parsePlain, isEnhanced, isKaraoke, stampToSeconds, stripVoicePrefix }

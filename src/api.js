@@ -194,6 +194,10 @@ export const api = {
   avatarURL: (id) => `${BASE}/avatar/${id}`,
   getTracks: (o = {}) => isE() ? el().getTracks(o) : apiFetch(`/tracks?${new URLSearchParams(o)}`),
   getTrackFileSize: (id) => isE() ? el().getTrackFileSize(id) : apiFetch(`/tracks/${encodeURIComponent(id)}/file-size`),
+  repairLowQualityArtwork: () => isE() ? el().repairLowQualityArtwork() : Promise.resolve({ error: 'Artwork repair requires the desktop app' }),
+  artworkRepairStatus: () => isE() ? el().artworkRepairStatus() : Promise.resolve({ running: false }),
+  cancelArtworkRepair: () => isE() ? el().cancelArtworkRepair() : Promise.resolve({ running: false }),
+  onArtworkRepairProgress: (fn) => isE() ? el().onArtworkRepairProgress(fn) : () => {},
   getLibraryFolders: (relativePath = '', search = '', root = '') => isE()
     ? el().getLibraryFolders(relativePath, search, root)
     : apiFetch('/tracks/library-folders?path=' + encodeURIComponent(relativePath) + (search ? '&search=' + encodeURIComponent(search) : '') + (root ? '&root=' + encodeURIComponent(root) : '')),
@@ -257,6 +261,8 @@ export const api = {
   // Magic Sort: reorders a playlist for smooth transitions (electron/mixing); progress while it analyses songs.
   magicSortPlaylist: (pl) => isE() ? el().magicSortPlaylist(pl) : apiFetch(`/playlists/${pl}/magic-sort`, { method: 'POST' }),
   onMagicSortProgress: (fn) => isE() && el().onMagicSortProgress ? el().onMagicSortProgress((_, p) => fn(p)) : () => {},
+  automixStemClip: (outgoing, incoming) => isE() && el()?.automixStemClip ? el().automixStemClip(outgoing, incoming) : Promise.resolve(null),
+  automixPreparePair: (outgoing, incoming, engineDir) => isE() && el()?.automixPreparePair ? el().automixPreparePair(outgoing, incoming, engineDir) : Promise.resolve(null),
   // Flow's songs: the library with this user's likes and plays (electron/ipc/flow.js; the server's /tracks/flow-pool on the web).
   flowPool: (uid) => isE() && el()?.flowPool ? el().flowPool(uid || 'guest') : apiFetch(`/tracks/flow-pool?userId=${encodeURIComponent(uid || 'guest')}`),
   spotifyLikesPush: (track) => isE() && el()?.spotifyLikesPush ? el().spotifyLikesPush(track) : Promise.resolve({ ok: false }),

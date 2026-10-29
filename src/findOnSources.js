@@ -4,6 +4,7 @@
 export const DEFAULT_SEARCH_SOURCES = Object.freeze([
   { id: 'yt', label: 'YouTube Music' },
   { id: 'sc', label: 'SoundCloud' },
+  { id: 'mono', label: 'Monochrome' },
 ])
 
 export const SOULSEEK_SEARCH_SOURCE = Object.freeze({ id: 'slsk', label: 'Soulseek' })

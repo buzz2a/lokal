@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 const require = createRequire(import.meta.url)
 const { atmosProbeCandidate, hasAtmosJocProfile, probeAtmosFile } = require('../electron/quality/atmos')
 const backend = require('../electron/quality')
+const { findAudioEditionDuplicate } = require('../electron/quality/editionDuplicates')
 const source = readFileSync(new URL('../src/quality.js', import.meta.url), 'utf8')
   .replace("import { peekSettings } from './api'", 'const peekSettings = () => ({})')
 const frontend = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
@@ -85,8 +86,49 @@ test('single-file imports verify Atmos before their quality transaction', () => 
   assert.match(single, /currentQuality\.atmos_verified = await quality\.probeAtmosFile\(filePath, \{ codec: currentQuality\.codec \}\)/)
 })
 
+test('Audio Quality summary arranges all six categories in balanced responsive rows', () => {
+  const page = readFileSync(new URL('../src/pages/Quality.jsx', import.meta.url), 'utf8')
+  assert.match(page, /grid-cols-2 gap-2 @sm:grid-cols-3 @4xl:grid-cols-6/,
+    'two across on small screens, three on medium, six across on wide desktop')
+  assert.doesNotMatch(page, /@lg:grid-cols-5/,
+    'five columns leave the sixth category orphaned at desktop widths')
+  assert.match(page, /\['atmos', 'hires', 'lossless', 'high', 'low', 'suspect'\]\.map\(tier =>/,
+    'Atmos and the Suspect diagnostic both remain visible and selectable')
+  assert.match(page, /onClick=\{\(\) => setFilter\(tier\)\}/)
+  assert.match(page, /line-clamp-2/,
+    'allow the category descriptions to use two lines instead of clipping')
+})
+
 test('Quality page offers lossless replacement only for eligible tracks', () => {
   const page = readFileSync(new URL('../src/pages/Quality.jsx', import.meta.url), 'utf8')
   assert.match(page, /\{canGetLossless\(track\) && \(/)
   assert.equal(frontend.canGetLossless({ id: 9, file_path: '/music/joc.ec3', atmos_verified: 1, lossless: 0 }), false)
+})
+
+test('duplicate matching treats stereo and verified Atmos as distinct library editions', () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec(`CREATE TABLE tracks (
+      id TEXT PRIMARY KEY, title TEXT, artist TEXT, album TEXT,
+      duration REAL, file_path TEXT, atmos_verified INTEGER
+    )`)
+    const insert = db.prepare('INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?, ?)')
+    insert.run('stereo', 'To You', 'Muttonheads', 'Album', 203,
+      '/music/stereo.flac', 0)
+    const wanted = { title: 'To You', artist: 'Muttonheads', album: 'Album', duration: 203 }
+    assert.equal(findAudioEditionDuplicate(db, { ...wanted, atmosVerified: 1 }), undefined,
+      'the existing stereo file must not suppress the first Atmos edition')
+    assert.equal(findAudioEditionDuplicate(db, { ...wanted, atmosVerified: 0 })?.id, 'stereo')
+    assert.equal(findAudioEditionDuplicate(db, wanted)?.id, 'stereo',
+      'unverified or unknown profiles remain ordinary audio')
+    insert.run('atmos', 'To You', 'Muttonheads', 'Album', 203,
+      '/music/joc.atmos.m4a', 1)
+    assert.equal(findAudioEditionDuplicate(db, { ...wanted, atmosVerified: 1 })?.id, 'atmos')
+    assert.equal(findAudioEditionDuplicate(db, { ...wanted, atmosVerified: 0 })?.id, 'stereo')
+    insert.run('ghost', 'To You', 'Muttonheads', 'Album', 203,
+      'ghost://addon/123/song', 1)
+    assert.equal(findAudioEditionDuplicate(db, { ...wanted, atmosVerified: 1 })?.id, 'atmos')
+  } finally {
+    db.close()
+  }
 })

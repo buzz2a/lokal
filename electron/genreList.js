@@ -7,7 +7,7 @@ const OTHER = 'Other'
 const OTHER_KEY = 'other'
 const MIN_GENRE_TRACKS = 2
 
-const { groups: GROUPS, noise: NOISE_VALUES } = require('./genreTaxonomy.json')
+const { groups: GROUPS, hints: FAMILY_HINTS, noise: NOISE_VALUES } = require('./genreTaxonomy.json')
 const NOISE = new Set(NOISE_VALUES)
 
 function taxonomyKey(value) {
@@ -24,12 +24,45 @@ for (const [canonical, aliases] of GROUPS) {
   for (const alias of aliases) ALIASES.set(taxonomyKey(alias), canonical)
 }
 
+// Generic music subgenres (e.g. "deep melodic techno") can be classified by
+// meaningful *whole words* even when their full name is not an exact alias.
+// A collision between families is ambiguous and stays Other. Both platforms
+// use the same family hint data; no online lookup or metadata changes.
+function genreWords(value) {
+  return String(value || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim().replace(/\s+/g, ' ')
+}
+const NORMALIZED_HINTS = FAMILY_HINTS.map(([family, hints]) => [
+  family, hints.map(genreWords).filter(Boolean),
+])
+function inferredGenreFamily(raw) {
+  const words = genreWords(raw)
+  if (!words) return null
+  const padded = ' ' + words + ' '
+  let result = null
+  for (const [family, hints] of NORMALIZED_HINTS) {
+    if (!hints.some(hint => padded.includes(' ' + hint + ' '))) continue
+    // "indie" and "alternative" usually modify the actual genre
+    // (e.g. "experimental indie shoegaze"). They are only a fallback
+    // family when no stronger musical style was recognized.
+    if (family === 'Indie / Alternative' && result) continue
+    if (result === 'Indie / Alternative') { result = family; continue }
+    if (result && result !== family) return null
+    result = family
+  }
+  return result
+}
+
 /** Convert a raw tag to a broad display/filter category, or null for junk. */
 function normalizeGenreName(value) {
   const raw = String(value || '').replace(/\s+/g, ' ').trim()
   const key = taxonomyKey(raw)
   if (!key || /^\d+$/.test(key) || NOISE.has(key)) return null
-  return ALIASES.get(key) || OTHER
+  // Exact known styles win; one clear broad-family hint wins next.
+  // Unknown or conflicting names remain Other, even when many songs use them.
+  return ALIASES.get(key) || inferredGenreFamily(raw) || OTHER
 }
 
 /** "Rock / Pop; Indie" -> separate canonical categories, without repeats. */
@@ -46,9 +79,9 @@ function splitGenres(value) {
   return out
 }
 
-/** Compares labels regardless of case and spacing. */
+/** Same Unicode/case/punctuation identity for canonical genre categories. */
 function genreKey(name) {
-  return String(name || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
+  return taxonomyKey(name)
 }
 
 /** Every raw tag of a track row mapped into broad, deduplicated categories. */
@@ -66,8 +99,9 @@ function trackGenres(row) {
   return out
 }
 
-// Rare, otherwise-valid categories are folded into Other for the current DB.
-// The original genre strings are kept on the track and in the audio-file tags.
+// Recognized subgenres are consistently mapped to broad canonical genres,
+// even if only one song is tagged. Genuinely ambiguous or unrecognized tags
+// end up in Other, never in a new catch-all custom-genre card.
 const rareGenreKeysByDb = new WeakMap()
 
 function visibleGenres(genres, rareKeys = new Set()) {
@@ -100,10 +134,11 @@ function registerGenreFunctions(db) {
 }
 
 /**
- * Genres page categories, counted by distinct track and artwork. Categories
- * used by only one track are merged into Other; if Other itself has fewer than
- * two tracks, those tags are treated as unclassified instead of getting a
- * one-track card.
+ * Genres page categories, counted by distinct track and artwork. Recognized
+ * genres are always shown, even if there is only one song. Unrecognized or
+ * conflicting subgenre labels go into Other, even if repeated, rather than
+ * creating dozens of almost-identical cards. Other with fewer than two songs
+ * stays accessible as the unclassified No genre category.
  */
 function genreSummary(db) {
   registerGenreFunctions(db)
@@ -117,7 +152,10 @@ function genreSummary(db) {
     }
   }
 
-  const rareKeys = new Set([...counts].filter(([key, count]) => key !== OTHER_KEY && count < MIN_GENRE_TRACKS).map(([key]) => key))
+  const knownKeys = new Set([...ALIASES.values()].map(genreKey))
+  const rareKeys = new Set([...counts]
+    .filter(([key, count]) => key !== OTHER_KEY && !knownKeys.has(key) && count < MIN_GENRE_TRACKS)
+    .map(([key]) => key))
   const rareOnly = tracks.map(({ genres }) => visibleGenres(genres, rareKeys))
   const otherTracks = rareOnly.reduce((count, names) => count + (names.includes(OTHER) ? 1 : 0), 0)
   if (otherTracks < MIN_GENRE_TRACKS) rareKeys.add(OTHER_KEY)

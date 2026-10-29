@@ -8,6 +8,7 @@ const { downloadImageWithTimeout } = require('../artworkDownload')
 const artistRoles = require('../artistRoles')
 const mm = require('../musicMetadata')
 const quality = require('../quality')
+const { findAudioEditionDuplicate } = require('../quality/editionDuplicates')
 const addedDate = require('../addedDate')
 const artistSplit = require('../artistSplit')
 const { getArtistNamePreference, artistNamePreferenceNeedsRescan, rememberArtistNamePreferenceAfterScan } = require('../artistMetadataPreference')
@@ -28,6 +29,7 @@ const { artistIdFromName, findArtistById, migrateUnknownArtist, resolveArtistId,
 
 const DEFAULT_MUSIC_PATH = 'C:\\Users\\sipbuu\\Music'
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.ogg', '.wav', '.aac', '.opus', '.wma', '.alac', '.ape'])
+const { isPreparedStemClipName } = require('../automix/stem-clip')
 // Same secrets as the web server's SECRET_KEYS (server/routes/settings.js):
 // masked by settings:get, left out of settings:exportAll, kept on import.
 const SECRET_SETTING_KEYS = new Set(['soulseek_api_key', 'soulseek_password', 'spicylyrics_api_key', 'spotify_sp_dc', 'apple_music_user_token', 'listenbrainz_token', 'lastfm_api_secret', 'lastfm_session_key', 'yt_cookie_header', 'beatport_token'])
@@ -205,7 +207,8 @@ function walkDir(dir, files = [], failures = null) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) walkDir(full, files, failures)
-      else if (AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(full)
+      else if (!isPreparedStemClipName(entry.name) &&
+          AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(full)
     }
   } catch { failures?.push(dir) }
   return files
@@ -587,92 +590,7 @@ function addArtistFallback(db, artist) {
   return { ...artist, image_path: firstTrack?.artwork_path || null }
 }
 
-function lineToSearchText(line) {
-  if (!line) return ''
-  if (typeof line.text === 'string' && line.text.trim()) return line.text.trim()
-  if (Array.isArray(line.words) && line.words.length) {
-    return line.words.map((word, index) => {
-      const value = String(word?.word || '')
-      if (index === 0) return value
-      const prev = String(line.words[index - 1]?.word || '')
-      return prev.endsWith('-') ? value : ` ${value}`
-    }).join('').trim()
-  }
-  return ''
-}
-
-function normalizeLyricsSearchText(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function tokenizeLyricsSearch(value) {
-  return normalizeLyricsSearchText(value).split(' ').filter(Boolean)
-}
-
-function countLyricTokenMatches(text, tokens) {
-  if (!tokens.length) return 0
-  const normalized = normalizeLyricsSearchText(text)
-  let matches = 0
-  for (const token of tokens) {
-    if (normalized.includes(token)) matches += 1
-  }
-  return matches
-}
-
-function buildLyricsSnippet(lines, query) {
-  const tokens = tokenizeLyricsSearch(query)
-  if (!tokens.length) return ''
-  const texts = (Array.isArray(lines) ? lines : []).map(lineToSearchText).filter(Boolean)
-  const scored = texts
-    .map(text => ({ text, score: countLyricTokenMatches(text, tokens) }))
-    .filter(item => item.score > 0)
-    .sort((left, right) => right.score - left.score)
-  const match = scored[0]?.text
-  if (!match) return texts[0] || ''
-  const normalizedMatch = normalizeLyricsSearchText(match)
-  const firstToken = tokens.find(token => normalizedMatch.includes(token)) || tokens[0]
-  const lower = match.toLowerCase()
-  const start = Math.max(0, lower.indexOf(firstToken))
-  const snippetStart = Math.max(0, start - 36)
-  const snippetEnd = Math.min(match.length, start + firstToken.length + 36)
-  const prefix = snippetStart > 0 ? '…' : ''
-  const suffix = snippetEnd < match.length ? '…' : ''
-  return `${prefix}${match.slice(snippetStart, snippetEnd).trim()}${suffix}`
-}
-
-function searchLyricsEntries(db, query) {
-  const trimmed = String(query || '').trim()
-  if (trimmed.length < 3) return []
-  const tokens = tokenizeLyricsSearch(trimmed)
-  if (!tokens.length) return []
-  const term = `%${tokens[0]}%`
-  const rows = db.prepare(`
-    SELECT t.*, lc.content
-    FROM lyrics_cache lc
-    JOIN tracks t ON t.id = lc.track_id
-    WHERE t.file_path NOT LIKE 'ghost://%'
-      AND LOWER(lc.content) LIKE ?
-    ORDER BY t.play_count DESC, t.title
-    LIMIT 80
-  `).all(term)
-  return rows.map(row => {
-    let lines = []
-    try { lines = JSON.parse(row.content || '[]') } catch {}
-    const textBlob = (Array.isArray(lines) ? lines : []).map(lineToSearchText).join(' ')
-    const matchedTokens = countLyricTokenMatches(textBlob, tokens)
-    return {
-      ...row,
-      matchedTokens,
-      lyricSnippet: buildLyricsSnippet(lines, trimmed),
-    }
-  }).filter(row => row.lyricSnippet && row.matchedTokens >= Math.max(1, Math.ceil(tokens.length * 0.6)))
-    .sort((left, right) => right.matchedTokens - left.matchedTokens || (right.play_count || 0) - (left.play_count || 0))
-    .slice(0, 24)
-}
+const { searchLyricsEntries } = require('../lyrics/librarySearch')
 
 /**
  * Library > Source: where songs came from. 'local' is the music folder's own
@@ -682,7 +600,7 @@ function searchLyricsEntries(db, query) {
 function sourceFilter(source) {
   if (source === 'local') return { sql: 'download_source IS NULL', params: [] }
   if (source === 'addon') return { sql: "download_source LIKE 'a-%'", params: [] }
-  if (['yt', 'sc', 'soulseek', 'web', 'mobile'].includes(source)) return { sql: 'download_source = ?', params: [source] }
+  if (['yt', 'sc', 'mono', 'soulseek', 'web', 'mobile'].includes(source)) return { sql: 'download_source = ?', params: [source] }
   return null
 }
 
@@ -1117,6 +1035,17 @@ function registerScannerHandlers(ipcMain) {
   ipcMain.handle('scanner:scan', async (e, folder) => { mainWindow = BrowserWindow.fromWebContents(e.sender); return scanFolder(folder || DEFAULT_MUSIC_PATH) })
   ipcMain.handle('scanner:scanFolders', async (e, folders) => { mainWindow = BrowserWindow.fromWebContents(e.sender); return scanFolders(folders) })
   ipcMain.handle('scanner:status', () => scanStatus)
+  ipcMain.handle('scanner:artworkRepairStatus', () => require('../artwork/repairDownloads').artworkRepairStatus())
+  ipcMain.handle('scanner:artworkRepairCancel', () => require('../artwork/repairDownloads').cancelArtworkRepair())
+  ipcMain.handle('scanner:artworkRepair', (event) =>
+    require('../artwork/repairDownloads').repairLowQualityDownloads({
+      db: getDB(),
+      artworkDir: path.join(getStorageDir(), 'artwork'),
+      onProgress: (status) => {
+        if (!event.sender.isDestroyed()) event.sender.send('scanner:artworkRepairProgress', status)
+      },
+    }))
+
   ipcMain.handle('scanner:getTrackFileSize', (_, trackId) => {
     const filePath = getDB().prepare('SELECT file_path FROM tracks WHERE id = ?').get(String(trackId || ''))?.file_path
     if (!filePath || String(filePath).startsWith('ghost://')) return { bytes: null }
@@ -1815,7 +1744,16 @@ async function indexSingleFile(filePath, opts = {}) {
   const album = requestedAlbum || c.album?.trim() || 'Unknown Album'
   // A streamed (ghost) copy of the song isn't a copy in the library: the file
   // is added, and then takes the ghost's place.
-  const dupe = db.prepare("SELECT * FROM tracks WHERE LOWER(title) = ? AND LOWER(artist) = ? AND (album IS NULL OR album = ? OR ? IS NULL OR album IS NULL) AND ABS(duration - ?) < 2 AND file_path NOT LIKE 'ghost://%'").get(title.toLowerCase(), artist.toLowerCase(), album, album, duration)
+  // Stereo FLAC and Dolby Atmos JOC are different editions, even if their
+  // artist/title/album/duration are identical. Check the actual file profile,
+  // not the source's catalogue badge: a failed Atmos request must not bypass
+  // deduplication with an ordinary AAC or FLAC file.
+  // Support libraries upgraded before Atmos columns existed (and standalone
+  // imports where the scanner is invoked before the normal quality migration).
+  quality.ensureColumns(db)
+  const dupe = findAudioEditionDuplicate(db, {
+    title, artist, album, duration, atmosVerified: audioQuality.atmos_verified,
+  })
   if (dupe) {
     // A previous download may have left its database row behind after the
     // audio file was deleted. Reuse that row instead of creating a second
@@ -1921,6 +1859,8 @@ async function applyFileChanges(changes = []) {
     const rawPath = change?.path
     if (!rawPath) continue
     const filePath = path.resolve(String(rawPath))
+    // Prepared stem clips are internal transition cache, not library songs.
+    if (isPreparedStemClipName(filePath)) continue
     const owner = rootFor(filePath)
     if (!owner || seen.has(filePath)) continue
     seen.add(filePath)

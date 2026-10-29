@@ -429,9 +429,10 @@ export default function CoverFlow({ picks, onPlay, onContextMenu }) {
         const rect = e.currentTarget.getBoundingClientRect()
         select(flowIndexAt(e.clientX - rect.left, rect.width, size, position.get(), count, reduced, spread))
       }}
-      // Leave equal vertical clearance for the perspective-rotated covers,
-      // without a large unused area below the stage.
-      className="relative isolate cursor-grab select-none overflow-hidden bg-black outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-accent/40"
+      // Leave equal vertical clearance for the perspective-rotated covers.
+      // The stage must show the same theme background (or custom wallpaper) as
+      // Home; an opaque fill makes a full-width black band on other themes.
+      className="relative isolate cursor-grab select-none overflow-hidden bg-transparent outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-accent/40"
       style={{ height: size * 1.36, marginLeft: -bleed.left, marginRight: -bleed.right, touchAction: 'pan-y' }}>
       {picks.slice(visible.start, visible.end).map((pick, offset) => {
         const index = visible.start + offset

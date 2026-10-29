@@ -80,7 +80,9 @@ function albumIdOf(track) {
 }
 
 const { hasAtmosMetadata } = require('./atmos')
-const { skipPlaybackEnrichment } = require('./providerFastPath')
+const { addonDownloadQuality, isAtmosQuality } = require('./playbackQuality')
+const { probeAtmosFile } = require('../quality/atmos')
+const { shouldRetryEnrichment, isLiveProvider } = require('./providerFastPath')
 
 /** Keep album metadata string-valued before passing it into file taggers. */
 function normalizeTrackMetadata(track) {
@@ -308,12 +310,12 @@ class PackageService {
       }finally{runtime?.close();await fsp.rm(staged,{recursive:true,force:true})}
     })
   }
-  createRuntime(addon,code,{root,grants=[],onProgress,onTransfer,signal,heapMb}={}) {
+  createRuntime(addon,code,{root,grants=[],onProgress,onTransfer,onByteProgress,signal,heapMb}={}) {
     let network=this.networks.get(addon.key)
     if(!network){network=new ExtensionNetwork(addon.manifest.permissions);this.restoreConnection(addon.key,network);this.networks.set(addon.key,network)}
     let session
     if(addon.manifest.signedSession){const scope=hash(JSON.stringify(addon.manifest.signedSession));session=this.sessions.get(scope);if(!session){session=new SignedSession(addon.manifest.signedSession,this.storage,network,addon.key);this.sessions.set(scope,session)}}
-    const host=new ExtensionHost({addon,storage:this.storage,network,session,root:root || path.join(this.root,'data',addon.key,'files'),grants,tools:this.tools(),db:this.db,onProgress,onTransfer,signal})
+    const host=new ExtensionHost({addon,storage:this.storage,network,session,root:root || path.join(this.root,'data',addon.key,'files'),grants,tools:this.tools(),db:this.db,onProgress,onTransfer,onByteProgress,signal})
     const runtime=new ExtensionRuntime(code,{permissions:addon.manifest.permissions,signedSession:addon.manifest.signedSession,settings:this.settings(addon),rawFfmpeg:addon.manifest.capabilities?.rawFfmpeg,heapMb},host)
     runtime.ready.catch(()=>{})
     return runtime
@@ -422,9 +424,16 @@ class PackageService {
     if(pending.callback){const expected=new URL(pending.callback);if(url.protocol!==expected.protocol||url.host!==expected.host||url.pathname!==expected.pathname)throw new Error('Unexpected OAuth callback URL')}
     runtime.host.auth.code=url.searchParams.get('code') || '';runtime.host.auth.pending=null;runtime.host.network.persist?.();return {success:true}
   }
-  async download(key,id,{signal,onProgress,onLive,quality,purpose='download'}={}) {
+  async download(key,id,{signal,onProgress,onLive,quality,purpose='download',allowAtmos=false}={}) {
     const addon=this.find(key);if(!addon||!addon.enabled)throw new Error('Addon is not available')
     const controller=new AbortController(),opId=crypto.randomUUID(),combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal
+    let monitoringTransfer=false,transferStalled=false,inactivityTimer=null,lastPercent=-1,lastPart=null,lastWritten=0
+    const recordActivity=()=>{
+      if(!monitoringTransfer)return
+      clearTimeout(inactivityTimer)
+      inactivityTimer=setTimeout(()=>{transferStalled=true;controller.abort(new Error('Provider stopped delivering audio for 90 seconds'))},90000)
+      inactivityTimer.unref?.()
+    }
     this.operations.set(opId,{key,controller})
     const staged=path.join(this.root,'work',opId);await fsp.mkdir(staged,{recursive:true})
     // Downloads get more room than browsing: a worker that ran out mid-song
@@ -432,31 +441,46 @@ class PackageService {
     // Playback can start on the file as it arrives (media.js decides whether
     // it's playable as is): only when no post-processing hook will rewrite it.
     const hooks=addon.manifest.postProcessing?.enabled&&(addon.manifest.postProcessing.hooks || []).some(hook=>hook.defaultEnabled)
-    const onTransfer=purpose==='playback'&&onLive&&!hooks?onLive:undefined
-    const runtime=this.createRuntime(addon,fs.readFileSync(path.join(this.root,'packages',key,'index.js'),'utf8'),{grants:[staged],onProgress,onTransfer,signal:combined,heapMb:512})
+    // The same bytes and authorization path are used for saving and playing.
+    // Only Qobuz exposes growing media to the player; segmented, encrypted
+    // and converted providers finish downloading before playback starts.
+    const liveProvider=isLiveProvider(addon)
+    const startedAt=Date.now()
+    const phase=stage=>console.info(`[Mornye] ${addon.name} ${purpose} stage=${stage} elapsedMs=${Date.now()-startedAt}`)
+    let sawBytes=false
+    const onTransfer=hooks?undefined:info=>{
+      const written=Number(info?.written)||0
+      if(info?.part!==lastPart||written>lastWritten){lastPart=info?.part;lastWritten=written;recordActivity()}
+      if(!sawBytes&&written>0){sawBytes=true;phase('first_byte')}
+      if(liveProvider&&purpose==='playback')onLive?.(info)
+    }
+    let lastByteActivity=0
+    const onByteProgress=bytes=>{
+      if(!Number.isFinite(bytes)||bytes<=0)return
+      if(!sawBytes){sawBytes=true;phase('first_byte')}
+      // Byte delivery is authoritative even for segmented transfers with no
+      // finished segment yet, or when optional post-processing is enabled.
+      // Throttle timer resets; do not throttle bytes or player callbacks.
+      const now=Date.now()
+      if(now-lastByteActivity>=250){lastByteActivity=now;recordActivity()}
+    }
+    const relayProgress=update=>{
+      const percent=Number(update?.percent)
+      if(Number.isFinite(percent)){
+        if(percent>lastPercent)recordActivity()
+        lastPercent=percent // retries can restart at zero
+      }
+      onProgress?.(update)
+    }
+    const runtime=this.createRuntime(addon,fs.readFileSync(path.join(this.root,'packages',key,'index.js'),'utf8'),{grants:[staged],onProgress:relayProgress,onTransfer,onByteProgress,signal:combined,heapMb:512})
     try{
+      phase('initialize')
       await runtime.ready;await runtime.invoke('initialize',[this.settings(addon)],{signal:combined})
+      phase('availability_prepare')
       const rememberedRow=this.db.prepare('SELECT metadata_json FROM mornye_tracks WHERE provider=? AND id=?').get(`a-${key}`,String(id))
       let track=JSON.parse(rememberedRow?.metadata_json || 'null')
       if(!track&&runtime.methods.includes('getTrack'))track=await runtime.invoke('getTrack',[String(id)],{signal:combined})
       track ||= {id:String(id),name:'',artists:'',duration_ms:0,provider_id:addon.name}
-      // Search results may be sparse; Mornye providers such as Amazon
-      // expose enrichTrack() to resolve canonical release metadata before the
-      // availability check and prepared download context are built.
-      if(!skipPlaybackEnrichment({ addon, track, remembered:!!rememberedRow, purpose }) &&
-          runtime.methods.includes('enrichTrack')) {
-        try {
-          const enriched=await runtime.invoke('enrichTrack',[track],{timeoutMs:60000,signal:combined})
-          if(enriched && typeof enriched==='object' && !Array.isArray(enriched)) {
-            const values=Object.fromEntries(Object.entries(enriched).filter(([,value])=>value!==undefined&&value!==null&&value!==''&&value!==0&&!(typeof value==='string'&&!value.trim())&&!(Array.isArray(value)&&value.length===0)))
-            track={...track,...values}
-          }
-        } catch(error) {
-          // Enrichment is optional, but a timed-out/aborted worker cannot be
-          // reused safely for checkAvailability() or download().
-          if(combined.aborted || runtime.closed) throw error
-        }
-      }
       const providerName=addon.name.replace(/-web$/,'')
       // A source track may not have an Amazon album ID until checkAvailability()
       // resolves it to an Amazon ASIN. Reuse this fallback before and after matching.
@@ -483,13 +507,40 @@ class PackageService {
           console.warn('[Mornye] Amazon album lookup failed:', error.message || error)
         }
       }
-      await resolveAmazonAlbum()
-      const options={track,duration_ms:track.duration_ms || 0}
-      const directFields={qobuz:'qobuz_id',tidal:'tidal_id',deezer:'deezer_id',soundcloud:'spotify_id',amazon:'spotify_id'}
-      const directField=directFields[providerName]
-      if(directField) options[directField]=String(track[directField] || (providerName === 'amazon' || providerName === 'soundcloud' ? track.id : id))
-      const available=runtime.methods.includes('checkAvailability')?await runtime.invoke('checkAvailability',[track.isrc || '',track.name || '',track.artists || '',options],{signal:combined}):{available:true,track_id:String(id)}
+      const checkAvailability=()=>{
+        const options={track,duration_ms:track.duration_ms || 0}
+        const directFields={qobuz:'qobuz_id',tidal:'tidal_id',deezer:'deezer_id',soundcloud:'spotify_id',amazon:'spotify_id'}
+        const directField=directFields[providerName]
+        if(directField)options[directField]=String(track[directField] || (providerName === 'amazon' || providerName === 'soundcloud' ? track.id : id))
+        return runtime.methods.includes('checkAvailability')
+          ?runtime.invoke('checkAvailability',[track.isrc || '',track.name || '',track.artists || '',options],{timeoutMs:25000,signal:combined})
+          :Promise.resolve({available:true,track_id:String(id)})
+      }
+      phase('availability')
+      let available=await checkAvailability()
+      // Retry one failed authoritative ticket after optional enrichment, for
+      // every provider (including an exact Tidal ID). Play and Save follow
+      // the same path, with the same bounded timeout and no special skips.
+      if(shouldRetryEnrichment({available,hasEnrichment:runtime.methods.includes('enrichTrack')})){
+        phase('cross_provider_enrichment')
+        try{
+          const enriched=await runtime.invoke('enrichTrack',[track],{timeoutMs:20000,signal:combined})
+          if(enriched&&typeof enriched==='object'&&!Array.isArray(enriched)){
+            const values=Object.fromEntries(Object.entries(enriched).filter(([,value])=>value!==undefined&&value!==null&&value!==''&&value!==0&&!(typeof value==='string'&&!value.trim())&&!(Array.isArray(value)&&value.length===0)))
+            track={...track,...values}
+          }
+        }catch(error){
+          // Enrichment is optional; do not turn a failed availability ticket
+          // into an enrichment error unless the worker cannot continue.
+          if(combined.aborted||runtime.closed)throw error
+          console.warn('[Mornye] Optional enrichment failed; checking availability again')
+        }
+        phase('availability_retry')
+        available=await checkAvailability()
+      }
       if(!available?.available)throw new Error(available?.reason || 'The addon cannot download this track')
+      // Optional album metadata must not precede provider authorization.
+      await resolveAmazonAlbum()
       const matchedTrackId=available.track_id || available.trackId
       // Cross-provider matches often start with only Spotify metadata. Once Amazon
       // returns its ASIN, load Amazon's canonical track before the addon downloads.
@@ -515,8 +566,18 @@ class PackageService {
       // The Amazon extension prefers web_metadata over host_track, so keep both
       // in sync with the resolved Amazon metadata instead of the original track.
       if(providerName==='amazon') prepared.web_metadata=track
-      const chosen=quality || this.settings(addon).downloadQuality || addon.manifest.qualityOptions?.find(q=>q.kind==='lossless')?.id || addon.manifest.qualityOptions?.[0]?.id || 'default'
-      const result=await runtime.invoke('download',[available.track_id || available.trackId || String(id),chosen,path.join(staged,'audio.flac'),{preparedContext:prepared,resolutionTimeoutMs:60000}],{timeoutMs:24*3600000,signal:combined})
+      const chosen=addonDownloadQuality(addon,this.settings(addon),{quality,allowAtmos,purpose})
+      const downloadingAtmos=isAtmosQuality(chosen)
+      phase('download_start')
+      monitoringTransfer=true;recordActivity()
+      let result
+      try{
+        result=await runtime.invoke('download',[available.track_id || available.trackId || String(id),chosen,path.join(staged,'audio.flac'),{preparedContext:prepared,resolutionTimeoutMs:60000}],{timeoutMs:24*3600000,signal:combined})
+      }catch(error){
+        if(transferStalled)throw new Error('The provider stopped delivering audio for 90 seconds. Retry the track.')
+        throw error
+      }finally{monitoringTransfer=false;clearTimeout(inactivityTimer)}
+      phase('download_complete')
       if(!result?.success)throw Object.assign(new Error(result?.error_message || result?.error || 'Addon download failed'),{authUrl:result?.auth_url,errorType:result?.error_type})
       let file=safePath(runtime.host.root,result.file_path || result.filePath || result.path,runtime.host.grants)
       if(!fs.statSync(file).isFile()||!fs.statSync(file).size)throw new Error('Addon produced an empty file')
@@ -531,11 +592,14 @@ class PackageService {
         file=target
       }
       let info=await mediaInfo(file,tools,combined)
-      if(info.codec==='flac'&&!/\.flac$/i.test(file)||result.requires_container_conversion || result.requiresContainerConversion){
+      // Spatial E-AC-3 is not a FLAC input. Add-on container flags must not
+      // cause it to be transcoded before the JOC check; it gets a lossless
+      // bitstream-copy remux after positive verification instead.
+      if(!downloadingAtmos && (info.codec==='flac'&&!/\.flac$/i.test(file)||result.requires_container_conversion || result.requiresContainerConversion)){
         const target=path.join(staged,'remuxed.flac');onProgress?.({message:'Converting audio container…'})
         await runTool(tools.ffmpeg,['-nostdin','-y','-i',file,'-map','0:a:0','-c:a',info.codec==='flac'?'copy':'flac',target],combined);file=target;info=await mediaInfo(file,tools,combined)
       }
-      for(const hook of addon.manifest.postProcessing?.enabled ? addon.manifest.postProcessing.hooks || [] : []){
+      for(const hook of !downloadingAtmos && addon.manifest.postProcessing?.enabled ? addon.manifest.postProcessing.hooks || [] : []){
         const formats=hook.supportedFormats || hook.formats
         if(!hook.defaultEnabled||formats?.length&&!formats.includes(path.extname(file).slice(1)))continue
         const processed=await runtime.invoke('postProcessV2',[{path:file},track,hook.id],{timeoutMs:120000,signal:combined})
@@ -544,6 +608,26 @@ class PackageService {
         if(processed.new_file_path || processed.newFilePath)file=safePath(runtime.host.root,processed.new_file_path || processed.newFilePath,runtime.host.grants)
       }
       info=await mediaInfo(file,tools,combined)
+      if(downloadingAtmos) {
+        // Verify the actual downloaded audio, not its filename or catalogue
+        // badge. Preserve the compressed JOC bitstream via remux, never FLAC.
+        if(info.codec!=='eac3' || await probeAtmosFile(file,{codec:info.codec,ffprobe:tools.ffprobe})!==1) {
+          throw new Error('The addon did not supply verified E-AC-3 JOC Dolby Atmos audio; nothing was saved')
+        }
+        const target=path.join(staged,'verified.atmos.m4a')
+        await runTool(tools.ffmpeg,[
+          '-nostdin','-y','-i',file,'-map','0:a:0','-c:a','copy',
+          '-metadata','title='+String(track.name || track.title || '').slice(0,500),
+          '-metadata','artist='+(Array.isArray(track.artists) ? track.artists.map(a => typeof a === 'string' ? a : a?.name || '').join(', ') : String(track.artists || track.artist || '')),
+          '-metadata','album='+(albumNameOf(track) || ''),
+          target,
+        ],combined)
+        file=target
+        info=await mediaInfo(file,tools,combined)
+        if(info.codec!=='eac3' || await probeAtmosFile(file,{codec:info.codec,ffprobe:tools.ffprobe})!==1) {
+          throw new Error('Dolby Atmos JOC metadata was not preserved by the container remux')
+        }
+      }
       if(track.duration_ms && Math.abs(info.duration_ms-Number(track.duration_ms))>12000)throw new Error('Downloaded audio does not match the track duration')
       if(purpose==='playback'&&!['flac','mp3','aac','opus','vorbis','pcm_s16le','pcm_s24le','pcm_f32le'].includes(info.codec)){
         const lossless=['alac','flac','wavpack','ape'].includes(info.codec),target=path.join(staged,lossless?'playable.flac':'playable.m4a')
@@ -560,7 +644,7 @@ class PackageService {
       combined.throwIfAborted()
       return {file,staging:staged,metadata:normalizeTrackMetadata({...track,...result}),info,cleanup:()=>fsp.rm(staged,{recursive:true,force:true})}
     }catch(error){await fsp.rm(staged,{recursive:true,force:true});throw error}
-    finally{runtime.close();this.operations.delete(opId)}
+    finally{monitoringTransfer=false;clearTimeout(inactivityTimer);runtime.close();this.operations.delete(opId)}
   }
 }
 const services=new WeakMap()

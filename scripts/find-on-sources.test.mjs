@@ -8,18 +8,18 @@ test('lists built-in sources, Soulseek, then enabled addon sources with their ic
     { id: 'sc', label: 'SoundCloud' },
     { id: 'a-1234567890', label: 'HiFi addon', addon: true, icon: 'https://example.com/icon.png' },
   ])
-  assert.deepEqual(sources.map(source => source.id), ['yt', 'sc', 'slsk', 'a-1234567890'])
-  assert.equal(sources[3].label, 'HiFi addon')
-  assert.equal(sources[3].icon, 'https://example.com/icon.png')
+  assert.deepEqual(sources.map(source => source.id), ['yt', 'sc', 'mono', 'slsk', 'a-1234567890'])
+  assert.equal(sources[4].label, 'HiFi addon')
+  assert.equal(sources[4].icon, 'https://example.com/icon.png')
 })
 
 test('exports valid default menu sources including Soulseek', () => {
-  assert.deepEqual(DEFAULT_FIND_ON_SOURCES.map(source => source.id), ['yt', 'sc', 'slsk'])
+  assert.deepEqual(DEFAULT_FIND_ON_SOURCES.map(source => source.id), ['yt', 'sc', 'mono', 'slsk'])
 })
 
 test('uses safe defaults and does not duplicate Soulseek or providers', () => {
   const sources = orderedFindOnSources([{ id: 'slsk', label: 'Old Soulseek entry' }, { id: 'yt', label: 'YT' }])
-  assert.deepEqual(sources.map(source => source.id), ['yt', 'sc', 'slsk'])
+  assert.deepEqual(sources.map(source => source.id), ['yt', 'sc', 'mono', 'slsk'])
   assert.equal(sources.find(source => source.id === 'slsk').label, 'Soulseek')
 })
 

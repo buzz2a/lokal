@@ -15,7 +15,8 @@
 const { createHash } = require('node:crypto')
 const { lookup, parseImported, DEFAULT_ORDER } = require('./repository')
 const { describe } = require('./providers')
-const { finish, isUntimed } = require('./postprocess')
+const { finish, isUntimed, assignSides } = require('./postprocess')
+const { stripVoicePrefix } = require('./lrc')
 const translation = require('./translate')
 
 const META_VERSION = 2
@@ -135,9 +136,24 @@ function writeRow(db, trackId, filePath, result, extra = {}) {
     .run(trackId, result?.type || null, JSON.stringify(result?.lines || []), result?.source || 'no-results', Date.now(), filePath || null, JSON.stringify(meta))
 }
 
-function fromRow(row, meta) {
+function fromRow(row, meta, db) {
   let lines = []
   try { lines = JSON.parse(row.content || '[]') } catch {}
+  // Earlier versions cached the raw "v1:" prefix as if it were sung text.
+  // Repair these rows on first read; otherwise they would keep bypassing the
+  // fixed LRC parser indefinitely, especially for pinned/local lyrics.
+  let duet = !!meta.duet
+  if (Array.isArray(lines)) {
+    const cleaned = lines.map(stripVoicePrefix)
+    if (cleaned.some((line, index) => line !== lines[index])) {
+      lines = cleaned
+      duet = assignSides(lines)
+      try {
+        db?.prepare('UPDATE lyrics_cache SET content = ?, meta = ? WHERE track_id = ?')
+          .run(JSON.stringify(lines), JSON.stringify({ ...meta, duet }), row.track_id)
+      } catch { /* a read-only/legacy cache must still display corrected text */ }
+    }
+  }
   return {
     type: row.lyrics_type,
     sync: meta.sync,
@@ -145,7 +161,7 @@ function fromRow(row, meta) {
     source: row.source,
     isrc: meta.isrc,
     language: meta.language,
-    duet: meta.duet,
+    duet,
     translationLang: meta.translationLang,
     romanizationLang: meta.romanizationLang,
     attempts: meta.attempts || null,
@@ -253,7 +269,7 @@ async function getLyrics(db, args) {
   if (args.refresh) {
     const cachedRow = readRow(db, trackId, filePath)
     const cachedMeta = parseMeta(cachedRow)
-    if (cachedRow?.source === 'local' && cachedMeta) cachedLocalLyrics = fromRow(cachedRow, cachedMeta)
+    if (cachedRow?.source === 'local' && cachedMeta) cachedLocalLyrics = fromRow(cachedRow, cachedMeta, db)
   }
 
   if (!args.refresh) {
@@ -264,12 +280,12 @@ async function getLyrics(db, args) {
         if (row.source === 'no-results') {
           const fresh = row.fetched_at && Date.now() - row.fetched_at < NEGATIVE_TTL_MS
           if (fresh && negativeSettingsKeys.get(db)?.get(row.track_id) === settings.settingsKey) return null
-        } else if (row.lyrics_type === 'synced' && isUntimed(fromRow(row, meta).lines)) {
+        } else if (row.lyrics_type === 'synced' && isUntimed(fromRow(row, meta, db).lines)) {
           // Cached before untimed stamps were recognised (see isUntimed). A
           // source the user picked stays, as the plain text it really is;
           // anything else is looked up again so a truly synced source can win,
           // falling back to that plain text.
-          const plain = finish(fromRow(row, meta).lines.map(l => ({ text: l.text, time: null, words: [] })), { source: row.source })
+          const plain = finish(fromRow(row, meta, db).lines.map(l => ({ text: l.text, time: null, words: [] })), { source: row.source })
           if (meta.pinned) {
             writeRow(db, trackId || row.track_id, filePath || row.file_path, plain, { attempts: meta.attempts, pinned: true })
             return { ...plain, attempts: meta.attempts || null, pinned: true }
@@ -277,17 +293,17 @@ async function getLyrics(db, args) {
           if (plain.type) untimedFallback = { result: plain, attempts: meta.attempts || null }
         } else if (meta.pinned) {
           // An explicit source choice is the user's decision, even when plain.
-          const pinned = fromRow(row, meta)
+          const pinned = fromRow(row, meta, db)
           if (trackId && row.track_id !== trackId) writeRow(db, trackId, filePath, pinned, { attempts: meta.attempts, pinned: true })
           return pinned
         } else if (row.source === 'local' && row.lyrics_type !== 'synced') {
           // The song's own lyrics, saved unsynced: read again, so a file whose
           // timed lyrics were missed before (two lyrics tags, a SYLT frame)
           // gets them now. Keep the existing words if the refresh cannot improve them.
-          cachedLocalLyrics = fromRow(row, meta)
+          cachedLocalLyrics = fromRow(row, meta, db)
         } else {
-          if (trackId && row.track_id !== trackId) writeRow(db, trackId, filePath, fromRow(row, meta), { attempts: meta.attempts, pinned: meta.pinned })
-          return fromRow(row, meta)
+          if (trackId && row.track_id !== trackId) writeRow(db, trackId, filePath, fromRow(row, meta, db), { attempts: meta.attempts, pinned: meta.pinned })
+          return fromRow(row, meta, db)
         }
       } else if (row.source === 'imported' || String(row.source || '').startsWith('imported')) {
         const upgraded = upgradeLegacy(row)

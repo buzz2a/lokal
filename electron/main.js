@@ -17,6 +17,7 @@ log.errorHandler.startCatching()
 Object.assign(console, log.functions)
 
 const { autoUpdater } = require('electron-updater')
+const { createUpdateInstaller, shouldQuitOnWindowClosed } = require('./updaterInstall')
 const { initDB, getDB } = require('./ipc/db')
 const { registerScannerHandlers, registerExtraHandlers, registerV4Handlers, AUDIO_EXTS } = require('./ipc/scanner')
 const { registerMixesHandlers } = require('./ipc/mixes')
@@ -24,6 +25,7 @@ const { registerPlayerHandlers } = require('./ipc/player')
 const { registerDownloaderHandlers, registerExtraDownloaderHandlers, registerPlaylistArchiveHandlers, markInterruptedPlaylistsIncomplete, shutdownActiveDownloads } = require('./ipc/downloader')
 const { registerLyricsHandlers } = require('./ipc/lyrics')
 const { registerArtworkFxHandlers } = require('./ipc/artworkFx')
+const { registerWorkshopWallpaperHandlers } = require('./ipc/workshopWallpaper')
 const { registerFollowedArtistsHandlers } = require('./ipc/followedArtists')
 const { registerCacheHandlers } = require('./ipc/cache')
 const { registerRadioHandlers } = require('./ipc/radio')
@@ -168,6 +170,16 @@ autoUpdater.autoInstallOnAppQuit = true
 // Latest release: 2.0.2 is older than 2.0.3-nightly.N (no prompt), and the
 // official 2.0.3 is newer (prompt).
 autoUpdater.allowPrerelease = false
+const updateInstaller = createUpdateInstaller(autoUpdater, {
+  onStart: () => { isUpdating = true },
+  onError: error => {
+    isUpdating = false
+    log.error('[updater] failed to launch update installer:', error)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:error', error?.message || String(error))
+    }
+  },
+})
 // Nightly builds don't look for updates at all: someone on a nightly chose
 // it, and being offered the stable release (older in features once the
 // nightly moves on) makes no sense. New nightlies come from GitHub Releases.
@@ -189,12 +201,14 @@ autoUpdater.on('download-progress', (progress) => {
 })
 
 autoUpdater.on('update-downloaded', () => {
+  updateInstaller.markDownloaded()
   if (mainWindow) {
     mainWindow.webContents.send('updater:ready')
   }
 })
 
 autoUpdater.on('error', (err) => {
+  updateInstaller.markFailed()
   if (mainWindow) {
     mainWindow.webContents.send('updater:error', err.message)
   }
@@ -474,7 +488,7 @@ function createWindow() {
     // fast YouTube engine's sandbox, its attestation page, Spotify's canvas
     // lookup) would otherwise keep it running unseen, and opening Lokal again
     // would only find that window-less copy.
-    if (process.platform !== 'darwin' || isUpdating) app.quit()
+    if (shouldQuitOnWindowClosed(process.platform, isUpdating)) app.quit()
   })
   attachFullscreenSleepBlocker(mainWindow, { app, powerSaveBlocker })
   const sendVisibility = (hidden) => { if (!mainWindow.isDestroyed()) mainWindow.webContents.send('window:visibility', hidden) }
@@ -596,6 +610,7 @@ app.whenReady().then(() => {
   try { registerThumbarHandlers(ipcMain, () => mainWindow) } catch (e) { console.error('registerThumbarHandlers:', e.message) }
   try { registerSmtcHandlers(ipcMain, () => mainWindow) } catch (e) { console.error('registerSmtcHandlers:', e.message) }
   try { registerArtworkFxHandlers(ipcMain) } catch (e) { console.error('registerArtworkFxHandlers:', e.message) }
+  try { registerWorkshopWallpaperHandlers(ipcMain) } catch (e) { console.error('registerWorkshopWallpaperHandlers:', e.message) }
   try { registerFollowedArtistsHandlers(ipcMain) } catch (e) { console.error('registerFollowedArtistsHandlers:', e.message) }
   try { registerCacheHandlers(ipcMain) } catch (e) { console.error('registerCacheHandlers:', e.message) }
   try { registerOnlineHandlers(ipcMain) } catch (e) { console.error('registerOnlineHandlers:', e.message) }
@@ -937,14 +952,7 @@ ipcMain.on('open-logs', () => {
   }
 });
 
-ipcMain.handle('updater:install', () => {
-  isUpdating = true; 
-  BrowserWindow.getAllWindows().forEach(w => w.close());
-  
-  setTimeout(() => {
-    autoUpdater.quitAndInstall(false, true); 
-  }, 500);
-});
+ipcMain.handle('updater:install', () => updateInstaller.install())
   ipcMain.handle('updater:check', () => {
     if (IS_WINDOWS_STORE) return { store: true, version: app.getVersion() }
     if (IS_NIGHTLY) return { nightly: true, version: app.getVersion() }
@@ -998,7 +1006,7 @@ ipcMain.handle('updater:install', () => {
 })
 app.on('window-all-closed', () => {
   try { require('./libraryWatcher').stopWatching() } catch {}
-  if (process.platform !== 'darwin' || isUpdating) {
+  if (shouldQuitOnWindowClosed(process.platform, isUpdating)) {
     app.quit();
   }
 })
@@ -1021,12 +1029,7 @@ let discordCleared = false
 app.on('before-quit', (event) => {
   quitting = true
   removeTray()
-  if (isUpdating) {
-    if (mainWindow) {
-      mainWindow.destroy();
-    }
-  }
-  // Not while installing an update: the installer takes over the quit.
+  // During an update, the installer owns window shutdown, quit, and relaunch.
   if (!discordCleared && !isUpdating) {
     discordCleared = true
     event.preventDefault()

@@ -103,7 +103,7 @@ export async function loadAddonArtist(name, { anchor, hints = [] } = {}, client 
   // An artist search result already has an exact ID from its source. Honour
   // it before resolving by name; namesakes on YouTube or other addons must
   // not replace the artist the user explicitly clicked.
-  if (anchor?.artistId && anchor?.provider) {
+  if (anchor?.artistId && String(anchor.provider || '').startsWith('a-')) {
     const direct = await timed(() => client.addonArtist(anchor.provider, anchor.artistId), 15000).catch(() => null)
     if (direct && !direct.error && (direct.tracks?.length || direct.albums?.length)) {
       return fromResult(direct, anchor.provider)

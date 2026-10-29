@@ -1,4 +1,4 @@
-export const DEFAULT_PLAYBACK_SOURCES = [{ id: 'yt', label: 'YouTube Music' }, { id: 'sc', label: 'SoundCloud' }]
+export const DEFAULT_PLAYBACK_SOURCES = [{ id: 'yt', label: 'YouTube Music' }, { id: 'sc', label: 'SoundCloud' }, { id: 'mono', label: 'Monochrome' }]
 
 export function orderedPlaybackSources(saved, available = DEFAULT_PLAYBACK_SOURCES) {
   let order = saved

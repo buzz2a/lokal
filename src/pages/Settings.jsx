@@ -494,6 +494,32 @@ export default function Settings() {
   // shared with the Downloads panel, which can start them too).
   const genreJob = useLibraryJobs(s => s.genres)
   const [missingRepairJob, setMissingRepairJob] = useState(null)
+  const [artworkRepairJob, setArtworkRepairJob] = useState(null)
+  useEffect(() => {
+    if (!api.isElectron) return undefined
+    const off = api.onArtworkRepairProgress(status => setArtworkRepairJob(status))
+    api.artworkRepairStatus().then(status => {
+      if (status?.running || status?.total > 0) setArtworkRepairJob(status)
+    }).catch(() => {})
+    return off
+  }, [])
+  const refreshLowQualityArtwork = async () => {
+    if (artworkRepairJob?.running || !api.isElectron) return
+    setArtworkRepairJob(current => ({ ...current, running: true, error: '' }))
+    try {
+      const result = await api.repairLowQualityArtwork()
+      setArtworkRepairJob(result)
+      window.dispatchEvent(new Event('lokal:refresh'))
+    } catch (error) {
+      setArtworkRepairJob({ running: false, error: error?.message || 'Artwork repair failed' })
+    }
+  }
+  const artworkRepairText = artworkRepairJob?.running
+    ? t('{done} of {total} eligible downloaded files checked · {updated} upgraded', { done: artworkRepairJob.done || 0, total: artworkRepairJob.total || 0, updated: artworkRepairJob.updated || 0 })
+    : artworkRepairJob?.error ? t(artworkRepairJob.error)
+      : artworkRepairJob?.total !== undefined
+        ? t('{updated} upgraded · {skipped} unchanged · {failed} failed{cancelled}', { updated: artworkRepairJob.updated || 0, skipped: artworkRepairJob.skipped || 0, failed: artworkRepairJob.failed || 0, cancelled: artworkRepairJob.cancelled ? ' · stopped' : '' })
+        : t('Check previously downloaded addon covers smaller than 640 px. Only original cover URLs retained in the download history are used; custom artwork and uncertain matches remain unchanged.')
   const lyricsIndexJob = useLibraryJobs(s => s.lyrics)
   const indexAllLyrics = () => (lyricsIndexJob?.running ? cancelLyricsIndex() : startLyricsIndex())
   const indexText = (job, what) => job?.running
@@ -767,7 +793,7 @@ export default function Settings() {
     touchedSettingsRef.current.add(k)
     setSettings(s => ({ ...s, [k]: v }))
     queueSettings({ [k]: v })
-    if (k.startsWith('crossfade_') || k === 'song_transitions' || k === 'automix_same_album') usePlayerStore.getState().setCrossfadeOptions(readCrossfadeSettings({ ...settings, [k]: v }))
+    if (k.startsWith('crossfade_') || k === 'song_transitions' || k === 'automix_same_album' || k === 'automix_stem_clips' || k === 'automix_auto_prepare' || k === 'automix_engine_path') usePlayerStore.getState().setCrossfadeOptions(readCrossfadeSettings({ ...settings, [k]: v }))
     if (k === 'replaygain_mode') usePlayerStore.getState().setReplayGainMode(v)
   }
   const crossfade = readCrossfadeSettings(settings)
@@ -1406,6 +1432,17 @@ activeCategory === 'data' ? usersTried
              {missingRepairJob?.running ? t('Repairing…') : t('Repair All')}
            </button>
          </Row>
+        {api.isElectron && (
+        <Row label={t("Refresh Low-Quality Covers")} desc={artworkRepairText}>
+          <button
+            onClick={artworkRepairJob?.running ? () => api.cancelArtworkRepair() : refreshLowQualityArtwork}
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm text-white hover:border-accent/30 transition-colors"
+          >
+            <RefreshCw size={13} className={artworkRepairJob?.running ? 'animate-spin' : ''} />
+            {artworkRepairJob?.running ? t('Stop') : t('Refresh Covers')}
+          </button>
+        </Row>
+        )}
         <Row label={t("Rescan Library")}>
           <button onClick={rescan} disabled={scanning || (!settings.music_folder && !settings.music_folders)}
             className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg text-sm text-white hover:border-accent/30 disabled:opacity-40 transition-colors">
@@ -1738,6 +1775,36 @@ activeCategory === 'data' ? usersTried
             </button>
           </Row>
         )}
+        {crossfade.mode === 'automix' && (
+          <Row label={t("Prepared Stem Mixes (Experimental)")}
+            desc={t("Use a previously prepared, source-verified Demucs transition clip when both local tracks match. No models are downloaded or run during playback. Other tracks use regular AutoMix. Pauses and skips cancel the clip.")}>
+            <button
+              onClick={() => set('automix_stem_clips', settings.automix_stem_clips === '1' ? '0' : '1')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.automix_stem_clips === '1' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
+              {settings.automix_stem_clips === '1' ? t('On') : t('Off')}
+            </button>
+          </Row>
+        )}
+        {crossfade.mode === 'automix' && (<>
+          <Row label={t("Automatic Cue Preparation")}
+            desc={t("Optional: analyze upcoming local MP3 pairs in the background using your separately installed AutoMix Engine. Cached cue data is reused; normal playback never waits for the model.")}>
+            <button
+              onClick={() => set('automix_auto_prepare', settings.automix_auto_prepare === '1' ? '0' : '1')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.automix_auto_prepare === '1' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
+              {settings.automix_auto_prepare === '1' ? t('On') : t('Off')}
+            </button>
+          </Row>
+          {settings.automix_auto_prepare === '1' && (
+            <Row label={t("AutoMix Engine Folder")}
+              desc={t("Local folder containing cue_analysis.py and its installed CUE-DETR model. No weights are downloaded by Lokal.")}>
+              <input type="text" spellCheck={false}
+                value={settings.automix_engine_path || ''}
+                onChange={e => set('automix_engine_path', e.target.value)}
+                placeholder="C:\\Tools\\automix-engine"
+                className="min-w-0 w-60 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50" />
+            </Row>
+          )}
+        </>)}
         {crossfade.mode === 'crossfade' && (
         <Row label={t("Crossfade")} desc={t("Start the next song this many seconds before the current one ends. Skipping doesn't fade.")}>
           <div className="flex items-center gap-2">
@@ -2303,12 +2370,18 @@ activeCategory === 'data' ? usersTried
             {settings.artwork_backdrop !== '0' ? t('On') : t('Off')}
           </button>
         </Row>
-        <Row label={t("Rotating CD")} desc={t("Rotate the album cover like a CD in fullscreen while music plays. Animated covers take priority.")}>
-          <button
-            onClick={() => set('fullscreen_rotating_cd', settings.fullscreen_rotating_cd === '1' ? '0' : '1')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-display uppercase tracking-wider border transition-colors ${settings.fullscreen_rotating_cd === '1' ? 'bg-accent/20 border-accent/50 text-accent' : 'border-border text-muted hover:text-white'}`}>
-            {settings.fullscreen_rotating_cd === '1' ? t('On') : t('Off')}
-          </button>
+        <Row label={t("Fullscreen Artwork")} desc={t("Choose the fullscreen player presentation. Rotating CD uses the classic disc effect; Turntable uses the current cover on a record sleeve and spinning vinyl. Turntable temporarily disables Moving Covers and Spotify Canvas in fullscreen only.")}>
+          <select
+            value={['cover', 'cd', 'turntable'].includes(settings.fullscreen_visual_mode)
+              ? settings.fullscreen_visual_mode
+              : settings.fullscreen_rotating_cd === '1' ? 'cd' : 'cover'}
+            onChange={e => set('fullscreen_visual_mode', e.target.value)}
+            aria-label={t("Fullscreen Artwork")}
+            className="bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-accent/50">
+            <option value="cover">{t('Album Cover')}</option>
+            <option value="cd">{t('Rotating CD')}</option>
+            <option value="turntable">{t('Turntable')}</option>
+          </select>
         </Row>
         <Row label={t("Moving Covers")} desc={t("Play an album's animated cover in the side panel and full screen player, when there is one.")}>
           <button

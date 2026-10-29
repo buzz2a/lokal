@@ -12,7 +12,7 @@
 // minor profiles in all twelve keys.
 
 const RATE = 11025
-const VERSION = 1
+const VERSION = 2 // cue candidates extend the cached analysis schema
 
 // ---------------------------------------------------------------- loudness
 
@@ -300,6 +300,56 @@ function key(chromagram) {
   }
 }
 
+// ---------------------------------------------------------------- structural cue hints
+
+/**
+ * Cheap, deterministic bar-aligned energy changes. These are *heuristics*,
+ * not CUE-DETR predictions or separated-vocal detections. They identify
+ * possible entrances (rise) and exits (drop) without running inference on
+ * the playback thread. The transition planner must still validate timing.
+ *
+ * Envelope hop is 50 ms; only the bounded early/late portions are inspected.
+ */
+function cueCandidates(env, bpm, firstBeat, bounds, hop = 0.05) {
+  if (!(Number.isFinite(bpm) && bpm >= 55 && bpm <= 210 &&
+        Number.isFinite(firstBeat) && Number.isFinite(bounds?.audibleEnd))) {
+    return { entrances: [], exits: [] }
+  }
+  const beat = 60 / bpm
+  const bar = 4 * beat
+  const duration = Math.min(bounds.audibleEnd, env.length * hop)
+  const mean = (from, to) => {
+    const start = Math.max(0, Math.floor(from / hop))
+    const end = Math.min(env.length, Math.ceil(to / hop))
+    if (start >= end) return 0
+    let sum = 0
+    for (let i = start; i < end; i++) sum += env[i] * env[i]
+    return Math.sqrt(sum / (end - start))
+  }
+  const window = Math.min(3.5, Math.max(0.65, bar))
+  const arrivals = []
+  const exits = []
+  const first = firstBeat + Math.max(0, Math.ceil((window - firstBeat) / bar)) * bar
+  for (let t = first; t < duration - window; t += bar) {
+    const before = mean(t - window, t)
+    const after = mean(t, t + window)
+    const change = 20 * Math.log10((after + 0.0001) / (before + 0.0001))
+    const scoreRise = Math.min(1, Math.max(0, (change - 2.5) / 11))
+    const scoreFall = Math.min(1, Math.max(0, (-change - 2.5) / 11))
+    if (scoreRise >= 0.35 && t <= Math.min(65, duration * 0.45)) {
+      arrivals.push({ time: Math.round(t * 1000) / 1000, confidence: Math.round(scoreRise * 1000) / 1000 })
+    }
+    if (scoreFall >= 0.35 && t >= Math.max(15, duration - 75)) {
+      exits.push({ time: Math.round(t * 1000) / 1000, confidence: Math.round(scoreFall * 1000) / 1000 })
+    }
+  }
+  const strongest = entries => entries
+    .sort((a, b) => b.confidence - a.confidence || a.time - b.time)
+    .slice(0, 12)
+    .sort((a, b) => a.time - b.time)
+  return { entrances: strongest(arrivals), exits: strongest(exits) }
+}
+
 // ---------------------------------------------------------------- all of it
 
 /** Everything AutoMix uses, from a song's mono PCM at `rate`. */
@@ -309,6 +359,9 @@ function analyze(pcm, rate = RATE) {
   const kicks = onsets(pcm, 3)
   const beat = tempo(kicks, rate, kicks)
   const tonal = key(chroma(pcm, rate))
+  const transitionCues = beat.confidence >= 0.35
+    ? cueCandidates(env, beat.bpm, beat.beat, bounds)
+    : { entrances: [], exits: [] }
   const round = value => (value == null ? null : Math.round(value * 1000) / 1000)
   return {
     version: VERSION,
@@ -327,7 +380,8 @@ function analyze(pcm, rate = RATE) {
     mode: tonal.mode,
     camelot: tonal.camelot,
     keyConfidence: tonal.confidence,
+    transitionCues,
   }
 }
 
-module.exports = { analyze, envelope, edges, onsets, tempo, chroma, key, fft, RATE, VERSION }
+module.exports = { analyze, envelope, edges, onsets, tempo, chroma, key, cueCandidates, fft, RATE, VERSION }

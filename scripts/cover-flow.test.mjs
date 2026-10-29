@@ -136,8 +136,21 @@ test('Cover Flow keeps its perspective stage without any reflected artwork', () 
   assert.ok(flow.includes('origin = useTransform(geometry'), 'pivot uses a single per-frame geometry value')
   assert.ok(!flow.includes('WebkitBoxReflect'), 'no CSS mirror exists even in full 3D')
   assert.ok(!flow.includes('scaleY(-1)'), 'no second mirrored-image layer exists')
-  assert.ok(flow.includes('bg-black'), 'the Cover Flow stage remains black')
+  assert.ok(flow.includes('bg-transparent'), 'the Cover Flow stage follows the Home background')
   assert.ok(flow.includes('flowPixelsPerCover(size, reduced)'), 'gesture scale follows the rendered mode')
+})
+
+test('Cover Flow background blends into every theme and custom wallpaper', () => {
+  const stage = flow.match(/className="relative isolate cursor-grab[^"]+"/)?.[0]
+  assert.ok(stage, 'the full-bleed carousel stage exists')
+  assert.match(stage, /\bbg-transparent\b/, 'no opaque stage background')
+  assert.doesNotMatch(stage, /\bbg-(?:black|base|surface|elevated|card)\b/,
+    'do not paint over the current theme or custom wallpaper')
+
+  const shell = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
+  assert.ok(shell.includes('overflow-y-auto bg-transparent'), 'Home uses a transparent page surface')
+  assert.ok(shell.includes("backgroundImage: 'var(--bg-image)'"),
+    'the shared app background supports custom wallpaper')
 })
 
 test('drag, fling, and trackpad use one-cover spacing in both rendering modes', () => {
@@ -203,7 +216,7 @@ test('the calibrated corner projection fits the reflection-free stage even while
       assert.ok(stageY > 0 && stageY < 1.36, 'cover edge must fit stage at ' + d + ': ' + stageY)
     }
   }
-  assert.ok(flow.includes('overflow-hidden bg-black'), 'no cover overflow or reflected copy')
+  assert.ok(flow.includes('overflow-hidden bg-transparent'), 'no cover overflow or reflected copy')
   assert.ok(flow.includes('translateY('), 'vanishing point is shifted below center like the model')
   assert.ok(flow.includes('FLOW_PERSPECTIVE'), 'CSS uses the same measured perspective as numeric test')
   assert.ok(!flow.includes('WebkitBoxReflect'), 'desktop remains reflection-free')

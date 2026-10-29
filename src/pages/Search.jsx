@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Music, Disc3, Clock, User, Play, Search as SearchIcon } from 'lucide-react'
+import { Music, Disc3, User, Play } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { usePlayerStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
@@ -268,7 +268,6 @@ export default function Search() {
             </button>
           ))}
         </div>
-        <p className="text-[11px] text-muted">{t(scopeDescription(scope))}</p>
         <div role="group" aria-label={t('Search result type')}
           className="flex max-w-full flex-wrap items-center gap-1">
           {SEARCH_RESULT_CATEGORIES.map(value => (
@@ -284,10 +283,7 @@ export default function Search() {
       {!showSearchResults && (
         <div className="space-y-6">
           {visibleRecentItems.length > 0 && (
-            <section>
-              <h2 className="text-xs font-display text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
-                <Clock size={12} /> Recent
-              </h2>
+            <section aria-label={t('Recent')}>
               <div className="grid grid-cols-3 @sm:grid-cols-5 gap-3">
                 {visibleRecentItems.map((item, i) => (
                   <motion.button
@@ -344,18 +340,7 @@ export default function Search() {
             </section>
           )}
           
-          {visibleRecentItems.length === 0 && (
-            <div className="text-center py-16 text-muted">
-              <SearchIcon size={36} className="mx-auto mb-3 opacity-20" />
-              <p className="text-sm">{scope === 'online'
-                ? t("Search online catalogues and playback sources from the bar at the top.")
-                : scope === 'library'
-                  ? t("Search your library from the bar at the top.")
-                  : t("Search your library, and online, from the bar at the top.")}</p>
-              <p className="text-xs mt-1 opacity-70">{t("Or just start typing anywhere in Lokal. Paste a link to download it.")}</p>
-            </div>
-          )}
-          
+
         </div>
       )}
 
@@ -373,8 +358,7 @@ export default function Search() {
 
           {showLibrary && showSongs && tracks.length > 0 && (
             <section>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-xs font-display text-muted uppercase tracking-widest">{t("Tracks")}</h2>
+              <div className="mb-3 flex justify-end">
                 <button onClick={() => playQueue(tracks, 0)} className="text-xs text-accent hover:text-accent/70 font-display uppercase tracking-wider transition-colors">{t("Play All")}</button>
               </div>
               <TrackList tracks={tracks} />
@@ -393,7 +377,6 @@ export default function Search() {
 
           {showLibrary && showLyrics && lyricMatches.length > 0 && (
             <section>
-              <h2 className="text-xs font-display text-muted uppercase tracking-widest mb-3">{t("Lyrics Matches")}</h2>
               <div className="space-y-2">
                 {lyricMatches.map((track, i) => (
                   <LyricsSearchResult
@@ -419,7 +402,6 @@ export default function Search() {
               of metadata-only Global catalogue suggestions. */}
           {showOnline && showSongs && <OnlineResults
             query={onlineQuery} soulseekFor={soulseekFor} findOn={findOnRequest}
-            showLibraryHint={scope !== 'online'}
           />}
         </>
       )}

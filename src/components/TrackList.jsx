@@ -4,6 +4,7 @@ import { Play, Pause, Heart, Plus, Camera, Trash2, Music, LibraryBig, Clock, Lis
 import { useNavigate } from 'react-router-dom'
 import { showToast, showLoadingToast } from './Toaster'
 import { canGetLossless, openLossless, formatLabel, isSuspect, tierOf, TIERS, losslessMenuItem, losslessManyMenuItem } from '../quality'
+import { atmosDownloadRef, downloadAtmosVersion } from '../atmosDownloads'
 import { usePlayerStore, useAppStore } from '../store/player'
 import { useShallow } from 'zustand/react/shallow'
 import { api, peekSettings } from '../api'
@@ -628,6 +629,10 @@ export default function TrackList({ tracks = [], showQuality = false, onRemove =
       one && onQuickAdd && { label: 'Add to this playlist', icon: LibraryBig, onSelect: () => handleQuickAdd(one) },
       one && (!oneGhost || needsResolution(one)) && { label: liked ? 'Remove from Liked Songs' : 'Like', icon: Heart, onSelect: () => toggleLike(one, { stopPropagation() {} }) },
        list.some(item => isStreamed(item) || needsResolution(item)) && { label: resolveTracks || !one ? `Download${one ? ' song' : count}` : 'Save to library', icon: Download, onSelect: () => downloadSongs(list) },
+       one && atmosDownloadRef(one) && { label: 'Download Dolby Atmos', icon: Download, onSelect: async () => {
+         const response = await downloadAtmosVersion(one).catch(error => ({ error: error.message }))
+         showToast(response?.error || 'Dolby Atmos download queued.')
+       } },
        one?.missing && { label: missingTrackCanRedownload(one) ? 'Redownload missing file' : 'Find replacement for missing file', icon: Download, onSelect: () => setGhostTrack(one) },
       one && !oneGhost && losslessMenuItem(one, Gem),
       !one && losslessManyMenuItem(list, Gem),
