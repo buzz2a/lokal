@@ -7,16 +7,28 @@
 const fs = require('fs')
 const { analysisFor, ensureTable } = require('./index')
 const { VERSION } = require('./analysis')
+const { automixFileCacheKey } = require('../ipc/automix')
 
 const PARALLEL = 2 // songs decoded at once (ffmpeg); the analysis itself is one worker
 
+// A library file's analysis is kept under automixFileCacheKey's key
+// ("file-v2:<id>:<size>:<mtime>:<offsets>"), the one AutoMix reads when the
+// song plays. Any revision of the song's file counts as analysed here (its
+// tempo and key are on the song already); AutoMix redoes a changed file's
+// own when it plays it. The prefix comes from the function itself, so a new
+// key version upstream still lines up.
+const KEY_PREFIX = automixFileCacheKey({ id: '\0' }, { size: 0, mtimeMs: 0 }).split('\0')[0]
+
+/** SQL: track_analysis `a` rows for the song whose id is `column` (a range on the key, so the index is used). */
+const analysisOf = column => `a.key >= '${KEY_PREFIX}' || ${column} || ':' AND a.key < '${KEY_PREFIX}' || ${column} || ';'`
+
 const PENDING = `t.file_path NOT LIKE 'ghost://%'
-  AND NOT EXISTS (SELECT 1 FROM track_analysis a WHERE a.key = t.id AND a.version = @version)`
+  AND NOT EXISTS (SELECT 1 FROM track_analysis a WHERE ${analysisOf('t.id')} AND a.version = @version)`
 
 /** Library songs with a file and no analysis yet: all of them, or those of `ids`. */
 function unanalysed(db, ids = null) {
   ensureTable(db)
-  const rows = db.prepare(`SELECT t.id, t.title, t.file_path FROM tracks t WHERE ${PENDING}`).all({ version: VERSION })
+  const rows = db.prepare(`SELECT t.* FROM tracks t WHERE ${PENDING}`).all({ version: VERSION })
   if (!ids) return rows
   const wanted = new Set(ids.map(String))
   return rows.filter(row => wanted.has(String(row.id)))
@@ -33,10 +45,18 @@ async function analyseSongs(db, songs, { ffmpeg, log = () => {}, onSong = () => 
     while (next < songs.length && !stopped()) {
       const song = songs[next++]
       const file = String(song.file_path || '')
-      const result = await analysisFor({
-        db, key: String(song.id), trackId: String(song.id), log, ffmpeg,
-        source: async () => (file && fs.existsSync(file) ? { file } : null),
-      }).catch(() => null)
+      let key = null
+      try {
+        const stat = fs.statSync(file)
+        if (stat.isFile()) key = automixFileCacheKey(song, stat)
+      } catch {}
+      // As AutoMix does: a file replaced between here and the decode isn't
+      // kept under the old revision's key.
+      const current = () => { try { return automixFileCacheKey(song, fs.statSync(file)) === key } catch { return false } }
+      const result = key ? await analysisFor({
+        db, key, trackId: String(song.id), log, ffmpeg,
+        source: async () => (current() ? { file } : null),
+      }).catch(() => null) : null
       onSong(song, result)
     }
   }
@@ -46,10 +66,10 @@ async function analyseSongs(db, songs, { ffmpeg, log = () => {}, onSong = () => 
 /** `rows` (tracks) each with its `analysis` (parsed), or null when it has none. */
 function withAnalyses(db, rows) {
   ensureTable(db)
-  const read = db.prepare('SELECT data FROM track_analysis WHERE key = ? AND version = ?')
+  const read = db.prepare(`SELECT data FROM track_analysis a WHERE ${analysisOf('@id')} AND a.version = @version ORDER BY a.analyzed_at DESC LIMIT 1`)
   return rows.map(row => {
     let analysis = null
-    try { analysis = JSON.parse(read.get(String(row.id), VERSION)?.data || 'null') } catch {}
+    try { analysis = JSON.parse(read.get({ id: String(row.id), version: VERSION })?.data || 'null') } catch {}
     return { ...row, analysis: analysis && !analysis.tooLong && !analysis.tooShort ? analysis : null }
   })
 }
@@ -103,4 +123,4 @@ function libraryAnalysisStatus(db) {
   return status
 }
 
-module.exports = { unanalysed, analyseSongs, withAnalyses, startLibraryAnalysis, cancelLibraryAnalysis, libraryAnalysisStatus }
+module.exports = { unanalysed, analyseSongs, withAnalyses, analysisOf, startLibraryAnalysis, cancelLibraryAnalysis, libraryAnalysisStatus }

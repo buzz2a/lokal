@@ -102,10 +102,15 @@ const FIELDS = {
     const match = `(${keys.map(each => { const { root, mode } = keyOf(each); params.push(root, mode); return '(t.track_key = ? AND t.mode = ?)' }).join(' OR ')})`
     return op === 'not' ? `(t.track_key BETWEEN 0 AND 11 AND t.mode IN (0, 1) AND NOT ${match})` : match
   },
-  // Percent in the editor, 0–1 in the library: imported energy, else the analysis' (from loudness).
+  // Percent in the editor, 0–1 in the library: imported energy, else the
+  // song's latest analysis (from loudness), else one kept under its id by an
+  // older AutoMix.
   energy: (op, value, params, db) => {
     ensureTable(db)
-    return numberCondition("COALESCE(t.energy, (SELECT json_extract(a.data, '$.energy') FROM track_analysis a WHERE a.key = t.id))", op, value, params, 0.01)
+    const { analysisOf } = require('../automix/library')
+    const latest = `(SELECT json_extract(a.data, '$.energy') FROM track_analysis a WHERE ${analysisOf('t.id')} ORDER BY a.analyzed_at DESC LIMIT 1)`
+    const legacy = "(SELECT json_extract(a.data, '$.energy') FROM track_analysis a WHERE a.key = t.id)"
+    return numberCondition(`COALESCE(t.energy, ${latest}, ${legacy})`, op, value, params, 0.01)
   },
   added: (op, value, params) => {
     const days = Number(value)
