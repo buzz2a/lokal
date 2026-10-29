@@ -34,6 +34,15 @@ preloadFonts()
 window.addEventListener('load', preloadFonts, { once: true })
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  // A page opened under an older worker may still be an older build: when a
+  // new worker takes over, load the page once more to get the current one.
+  const hadWorker = !!navigator.serviceWorker.controller
+  let reloaded = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadWorker || reloaded) return
+    reloaded = true
+    window.location.reload()
+  })
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(()=>{}))
 }
 

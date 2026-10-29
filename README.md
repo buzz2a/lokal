@@ -372,6 +372,8 @@ If you want to access your library from another device (e.g. devices on the go/l
    - **Use HTTPS on any network you don't fully trust** (a reverse proxy or tunnel with TLS): plain HTTP sends the key unencrypted, so anyone on the same network could read it. With `API_KEY` set, plain HTTP is only accepted from this machine and your local network, and reaching Lokal from outside needs HTTPS.
 4. Run `npm run dev:web`
 
+Other devices on port `3421` get the last build in `dist/`: run `npx vite build` after changes. For live code while developing, run `npm run dev:lan` and open `http://<this computer's IP>:5173` on the other device (`/api` is proxied to the app).
+
 ---
 
 ## Downloader Setup

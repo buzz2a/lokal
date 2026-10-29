@@ -9,6 +9,7 @@
     "test:electron-syntax": "node scripts/check-electron-syntax.cjs",
     "dev": "npm run gen:icons && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "dev:web": "npm run gen:icons && concurrently \"vite\" \"node server/start.js\"",
+    "dev:lan": "npm run gen:icons && concurrently \"vite --host\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "npm run gen:icons && vite build && npm run native:prepare && electron-builder",
     "server": "node server/start.js",
     "rebuild": "electron-rebuild -f -w better-sqlite3",

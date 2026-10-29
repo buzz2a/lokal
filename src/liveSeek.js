@@ -1,5 +1,5 @@
 // Seeking in a SpotiFLAC song that's still downloading (it plays as it
-// arrives, see electron/spotiflac/media.js). Chromium reads the end of a FLAC
+// arrives, see electron/mornye/media.js). Chromium reads the end of a FLAC
 // file before any seek, and that only exists once the download is complete,
 // so the seek waits: once the song is complete, it's reloaded at the
 // position asked for (the complete copy seeks freely).

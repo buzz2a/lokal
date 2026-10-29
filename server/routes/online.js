@@ -114,7 +114,7 @@ router.post('/addons', async (req, res) => {
   try { res.json(await sources.addons.install(getDB(), req.body?.url)) } catch (e) { res.status(400).json({ error: e.message }) }
 })
 const addonRequest = work => async (req, res) => { try { res.json(await work(req)) } catch (e) { res.status(400).json({ error: e.message }) } }
-router.post('/addons/packages', addonRequest(req => require('../../electron/spotiflac/api').dispatch(getDB(), req.body)))
+router.post('/addons/packages', addonRequest(req => require('../../electron/mornye/api').dispatch(getDB(), req.body)))
 router.delete('/addons/:key', addonRequest(req => sources.addons.remove(getDB(), req.params.key)))
 router.put('/addons/:key/enabled', addonRequest(req => sources.addons.setEnabled(getDB(), req.params.key, !!req.body?.enabled)))
 router.put('/addons/:key/settings', addonRequest(req => sources.addons.setSettings(getDB(), req.params.key, req.body?.values || {})))
@@ -134,7 +134,7 @@ setTimeout(() => { try { genres.backfillOnlineGenres(getDB()) } catch {} }, 2000
 router.post('/prepare/:provider/:id', async (req, res) => {
   try {
     const key = sources.addons.keyOfProvider(req.params.provider)
-    if (key && sources.addons.packageService(getDB()).find(key)) return res.json(require('../../electron/spotiflac/media').prepare(getDB(), key, req.params.id, { force: req.query.force === '1' }))
+    if (key && sources.addons.packageService(getDB()).find(key)) return res.json(require('../../electron/mornye/media').prepare(getDB(), key, req.params.id, { force: req.query.force === '1' }))
     const stream = await sources.resolveStream(req.params.provider, req.params.id, { ...streamOptions(), force: req.query.force === '1' })
     res.json({ ok: true, preview: !!stream.preview })
   } catch (e) { res.json({ error: e.message }) }
